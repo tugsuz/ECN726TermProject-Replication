@@ -1,0 +1,3037 @@
+-------------------------------------------------------------------------------
+      name:  <unnamed>
+       log:  /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/co
+> de/logs//regs_42.log
+  log type:  text
+ opened on:  17 Oct 2023, 23:01:29
+
+. 
+. *Outcomes and specs
+. local dlist us ch rw
+
+. local felist cs nofe
+
+. local speclist P CSQ CSQ_C CSQ_S CSQ_Q
+
+. 
+. *Tariff globals
+. global Z4 dlz_usch dlz_chus dlz_usi dlz_chrw
+
+. global Z2 dlz_usch dlz_chus
+
+. 
+. *Loop over countries and sectors (ex-leavout)
+. use "$processed/rf",clear
+
+. qui levels cty_iso3 if cty_iso3!="DEU", local(clist)
+
+. qui levels ind9_str if ind9_str!="Agriculture", local(slist)
+
+.         
+. ********************************************
+. *** Regressions (Country)
+. ********************************************
+. 
+. foreach f in `felist' {
+  2.         
+.         local link = "v_`f'"
+  3. 
+.         *erase files tmp files
+.         cap erase "$tmp/bs_beta_`link'_bs`b'.dta"
+  4.         cap erase "$tmp/bs_yhat_`link'_bs`b'.dta" 
+  5. 
+. 
+. foreach d in `dlist' {
+  6. 
+.         *create bootstrap sample, shares and tariff interactions
+.         use "$processed/rf",clear
+  7. 
+.         *Dummy
+.         g byte nofe = 1
+  8. 
+.         *bootstrap sample
+.         if `b'!=0 bsample, cluster(hs6) //bootstrap cluster
+  9. 
+.         *Total exports, period 0
+.         preserve
+ 10.                 collapse (sum) v_`d', by(cty_iso3)
+ 11.                 rename v_`d' totv0_`d'
+ 12.                 tempfile totv0
+ 13.                 save `totv0'
+ 14.         restore
+ 15.         merge m:1 cty_iso3 using `totv0', assert(match) nogen
+ 16. 
+.         *weights
+.         cap drop sw*
+ 17.         g sw_`d' = vwgt_i_`d'/totv0_`d'
+ 18.         mvencode sw_`d', mv(0) override
+ 19. 
+.         *country, sector list
+.         qui levels cty_iso3 if cty_iso3!="DEU", local(clist)
+ 20.         qui levels ind9_str if ind9_str!="Agriculture", local(slist)
+ 21. 
+. 
+.         *create size variables
+.         *note: some variables are redundant, but they will drop out of the re
+> gression
+.                 *beta1
+.                 g Q1a = E_us_lag/E_wd_lag
+ 22.                 g Q1b = v_wd_lag/E_wd_lag
+ 23.                 g Q1c = v_us_lag/E_`d'_lag
+ 24. 
+.                 *beta2
+.                 g Q2a = E_ch_lag/E_wd_lag
+ 25.                 g Q2b = v_wd_lag/E_wd_lag
+ 26.                 g Q2c = v_ch_lag/E_`d'_lag
+ 27. 
+.                 *beta3
+.                 g Q3a = E_us_lag/E_wd_lag
+ 28.                 g Q3b = v_wd_lag/E_wd_lag
+ 29.                 g Q3c = v_`d'_lag/E_`d'_lag
+ 30.                 g Q3d = v_us_lag/E_us_lag
+ 31. 
+.                 *beta4
+.                 g Q4a = E_ch_lag/E_wd_lag
+ 32.                 g Q4b = v_wd_lag/E_wd_lag
+ 33.                 g Q4c = v_`d'_lag/E_`d'_lag
+ 34.                 g Q4d = v_ch_lag/E_ch_lag
+ 35. 
+.                 mvencode Q*, mv(0) override //this is just for USA and CHN si
+> ze vars.
+ 36. 
+.         *tariff interactions
+.                 *country-tariff interactions
+.                 qui foreach c in `clist' {
+ 37.                         foreach z in $Z4 {
+ 38.                                 g _c_`z'_`c' = `z' if cty_iso3=="`c'"
+ 39.                                 replace _c_`z'_`c' = 0 if mi(_c_`z'_`c')
+ 40.                         }
+ 41.                 }
+ 42. 
+.                 *sector-tariff interactions
+.                 qui foreach s in `slist' {
+ 43.                         foreach z in $Z4 {
+ 44.                                 g _s_`z'_`s' = `z' if ind9_str=="`s'"
+ 45.                                 replace _s_`z'_`s' = 0 if mi(_s_`z'_`s')
+ 46.                         }
+ 47.                 }
+ 48. 
+.                 *size-tariff interactions
+.                 *beta1-tariff
+.                 foreach q in a b c {
+ 49.                         g _Q1`q'_usch = Q1`q'*dlz_usch
+ 50.                 }
+ 51.                 *beta2
+.                 foreach q in a b c {
+ 52.                         g _Q2`q'_chus = Q2`q'*dlz_chus
+ 53.                 }
+ 54.                 *beta3
+.                 foreach q in a b c d {
+ 55.                         g _Q3`q'_usi = Q3`q'*dlz_usi
+ 56.                 }
+ 57.                 *beta4
+.                 foreach q in a b c d {
+ 58.                         g _Q4`q'_chrw = Q4`q'*dlz_chrw
+ 59.                 }
+ 60. 
+.         qui compress
+ 61. 
+.         save $tmp/regs_`link'_`d'_bs`b',replace
+ 62. 
+. *****************************************************
+. ** REGRESSIONS 
+. *****************************************************
+. 
+.         *regressions, by destination
+.         use "$tmp/regs_`link'_`d'_bs`b'",clear
+ 63. 
+.                 *****************************************************
+.                 ** P: pooled (remove USA/CHN)
+.                 *****************************************************
+.                  
+.                 est clear
+ 64.                 noi dis "********** P `d' `link' **********"
+ 65.                 reghdfe dlv_`d' $Z4 dlv_`d'_lag mv_v_`d' if !inlist(cty_is
+> o,"USA","CHN"), a(`f') cluster(hs6)
+ 66.                 noi dis "********** P `d' `link' **********"
+ 67.                 g yhatP = 0
+ 68.                 qui foreach z in $Z4 {
+ 69.                         g betaP_`z' = 0
+ 70.                 }
+ 71. 
+.                 *yhat, common for all countries
+.                 qui foreach z in $Z4 {
+ 72.                         replace yhatP           = yhatP + _b[`z']*`z'
+ 73.                         replace betaP_`z'       = _b[`z']
+ 74.                 }
+ 75. 
+.                 *****************************************************
+.                 ** CSQ: country-tariff, sector-tariff, size-tariff
+.                 *****************************************************
+.                 
+.                 est clear
+ 76.                 noi dis "********** CSQ `d' `link' **********"
+ 77.                 reghdfe dlv_`d' $Z4 _c_* _s_* Q1* Q2* Q3* Q4* _Q1* _Q2* _Q
+> 3* _Q4* dlv_`d'_lag mv_v_`d', a(`f') cluster(hs6)
+ 78.                 noi dis "********** CSQ `d' `link' **********"
+ 79. 
+.                 g yhatCSQ_C = 0
+ 80.                 g yhatCSQ_S = 0
+ 81.                 g yhatCSQ_Q = 0
+ 82. 
+.                 qui foreach z in $Z4 {
+ 83.                         g betaCSQ_C_`z'         = 0
+ 84.                         g betaCSQ_S_`z'         = 0
+ 85.                         g betaCSQ_Q_`z'         = 0
+ 86.                 }
+ 87. 
+.                 **country response
+.                         *for leaveout-country
+.                         qui foreach z in $Z4 {
+ 88.                                 replace yhatCSQ_C               = _b[`z']*
+> `z' + yhatCSQ_C
+ 89.                                 replace betaCSQ_C_`z'   = _b[`z']
+ 90.                         }
+ 91.                         *for remaining countries
+.                         qui foreach c in `clist' {
+ 92.                                 foreach z in $Z4 {
+ 93.                                         replace yhatCSQ_C               = 
+> _b[_c_`z'_`c']*`z'    + yhatCSQ_C             if cty_iso3=="`c'"
+ 94.                                         replace betaCSQ_C_`z'   = _b[_c_`z
+> '_`c']                + betaCSQ_C_`z'         if cty_iso3=="`c'"
+ 95.                                 }
+ 96.                         }
+ 97. 
+.                 *sector response
+.                         qui foreach s in `slist' {
+ 98.                                 foreach z in $Z4 {
+ 99.                                         replace yhatCSQ_S               = 
+> _b[_s_`z'_`s']*`z'    + yhatCSQ_S             if ind9_str=="`s'"
+100.                                         replace betaCSQ_S_`z'   = _b[_s_`z
+> '_`s']                + betaCSQ_S_`z'         if ind9_str=="`s'"
+101.                                 }
+102.                         }
+103. 
+.                 *size
+.                         *beta1
+.                         foreach q in a b c {
+104.                                 replace yhatCSQ_Q                         
+>       =  _b[_Q1`q'_usch]*Q1`q'*dlz_usch       + yhatCSQ_Q
+105.                                 replace betaCSQ_Q_dlz_usch              = 
+>  _b[_Q1`q'_usch]*Q1`q'                        + betaCSQ_Q_dlz_usch
+106.                         }
+107.                         *beta2
+.                         foreach q in a b c {
+108.                                 replace yhatCSQ_Q                         
+>       =  _b[_Q2`q'_chus]*Q2`q'*dlz_chus       + yhatCSQ_Q
+109.                                 replace betaCSQ_Q_dlz_chus              = 
+>  _b[_Q2`q'_chus]*Q2`q'                        + betaCSQ_Q_dlz_chus
+110.                         }
+111.                         *beta3
+.                         foreach q in a b c d {
+112.                                 replace yhatCSQ_Q                         
+>       =  _b[_Q3`q'_usi]*Q3`q'*dlz_usi         + yhatCSQ_Q
+113.                                 replace betaCSQ_Q_dlz_usi               = 
+>  _b[_Q3`q'_usi]*Q3`q'                         + betaCSQ_Q_dlz_usi
+114.                         }
+115.                         *beta4
+.                         foreach q in a b c d {
+116.                                 replace yhatCSQ_Q                       = 
+>  _b[_Q4`q'_chrw]*Q4`q'*dlz_chrw               + yhatCSQ_Q
+117.                                 replace betaCSQ_Q_dlz_chrw      =  _b[_Q4`
+> q'_chrw]*Q4`q'                                + betaCSQ_Q_dlz_chrw
+118.                         }
+119. 
+.                         g yhatCSQ = yhatCSQ_C + yhatCSQ_S + yhatCSQ_Q
+120.                         qui foreach z in $Z4 {
+121.                                 g betaCSQ_`z' = betaCSQ_C_`z' + betaCSQ_S_
+> `z' + betaCSQ_Q_`z'
+122.                         }
+123. 
+.         ******************************
+.         ** zero out USA/CHN to self
+.         ******************************
+.         if "`d'"=="us" {
+124.                 foreach v of varlist yhat* beta* {
+125.                         replace `v' = . if cty_iso=="USA"
+126.                 }
+127.         }
+128.         if "`d'"=="ch" {
+129.                 foreach v of varlist yhat* beta* {
+130.                         replace `v' = . if cty_iso=="CHN"
+131.                 }
+132.         }
+133. 
+.         ******************************
+.         ** create betas file
+.         ******************************
+. 
+.         drop _*
+134.         preserve
+135.                 rename beta*_dlz_usch beta*_usch_`d'
+136.                 rename beta*_dlz_chus beta*_chus_`d'
+137.                 rename beta*_dlz_usi beta*_usi_`d'
+138.                 rename beta*_dlz_chrw beta*_chrw_`d'
+139. 
+.                 keep cty_iso3 hs6 ind9_str beta* sw_*
+140.                 rename cty_iso3 iso
+141.                 duplicates drop
+142.                 compress
+143.                 save "$tmp/bs_beta_`link'_`d'_bs`b'",replace
+144.         restore
+145.         drop beta*
+146. 
+. 
+.         ******************************
+.         *** create winners file ***
+.         ******************************
+. 
+.          *reweight yhats
+.                 foreach j in `speclist' {
+147.                         replace yhat`j' = sw_`d' * yhat`j'
+148.                 }
+149.                 replace dlv_`d' = sw_`d'*dlv_`d'
+150. 
+.         ***collapse
+.         collapse (sum) yhat* dlv_`d', by(cty_iso3)
+151.         rename yhat* yhat*_`d'
+152.         rename cty_iso3 iso
+153. 
+.         *save (this is at the iso-hs level)
+.         compress
+154.         save "$tmp/bs_yhat_`link'_`d'_bs`b'",replace
+155. 
+.         *erase main regs file
+.         cap erase "$tmp/regs_`link'_`d'_bs`b'.dta"      
+156. 
+. } //end d
+157. 
+. 
+.         *Combine yhats
+.         use "$tmp/bs_yhat_`link'_us_bs`b'",clear
+158.                 merge 1:1 iso using "$tmp/bs_yhat_`link'_ch_bs`b'", nogen
+159.                 merge 1:1 iso using "$tmp/bs_yhat_`link'_rw_bs`b'", nogen
+160.                 erase "$tmp/bs_yhat_`link'_us_bs`b'.dta"
+161.                 erase "$tmp/bs_yhat_`link'_ch_bs`b'.dta"
+162.                 erase "$tmp/bs_yhat_`link'_rw_bs`b'.dta"
+163. 
+.                 merge 1:1 iso using "$processed/Dweights", keep(master match)
+>  nogen
+164. 
+.                 *aggregate across destinations
+.                 foreach j in `speclist' {
+165.                         g yhat`j'_awd  = W_us*yhat`j'_us + W_ch*yhat`j'_ch
+>  + W_rw*yhat`j'_rw
+166.                 }
+167. 
+.                 rename yhat* yhat*_`b'
+168. 
+.                 g dlv_awd = W_us*dlv_us + W_ch*dlv_ch + W_rw*dlv_rw
+169.                 rename dlv_awd dlv_awd_`b'      
+170. 
+.         *save (this is at the iso level)
+.         keep iso yhat* dlv_awd_`b' 
+171.         order iso
+172.         compress
+173.         save "$tmp/bs_yhat_`link'_bs`b'",replace
+174. 
+. 
+.         *Combine betas
+.         use "$tmp/bs_beta_`link'_us_bs`b'",clear
+175.                 merge 1:1 iso hs6 using "$tmp/bs_beta_`link'_ch_bs`b'", no
+> gen
+176.                 merge 1:1 iso hs6 using "$tmp/bs_beta_`link'_rw_bs`b'", no
+> gen
+177.                 erase "$tmp/bs_beta_`link'_us_bs`b'.dta"
+178.                 erase "$tmp/bs_beta_`link'_ch_bs`b'.dta"
+179.                 erase "$tmp/bs_beta_`link'_rw_bs`b'.dta" 
+180.                 rename beta* beta*_bs`b'
+181. 
+.         compress
+182.         save "$tmp/bs_beta_`link'_bs`b'",replace
+183. 
+. } 
+file /tmp/7227594.1.debian.q/St12074.000002 saved as .dta format
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                           260,150  
+    -----------------------------------------
+(151,927 missing values generated)
+       sw_us: 151927 missing values recoded
+(7,800 missing values generated)
+(7,800 missing values generated)
+(7,800 missing values generated)
+(7,800 missing values generated)
+(7,800 missing values generated)
+(19,903 missing values generated)
+         Q1c: 7800 missing values recoded
+         Q2c: 7800 missing values recoded
+         Q3c: 7800 missing values recoded
+         Q3d: 7800 missing values recoded
+         Q4c: 7800 missing values recoded
+         Q4d: 19903 missing values recoded
+(file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /regs_v_cs_us_bs42.dta not found)
+file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /regs_v_cs_us_bs42.dta saved
+********** P us v_cs **********
+(MWFE estimator converged in 1 iterations)
+
+HDFE Linear regression                            Number of obs   =    103,739
+Absorbing 1 HDFE group                            F(   6,   3193) =     228.12
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.0714
+                                                  Adj R-squared   =     0.0675
+                                                  Within R-sq.    =     0.0543
+Number of clusters (hs6)     =      3,194         Root MSE        =     1.2346
+
+                                (Std. err. adjusted for 3,194 clusters in hs6)
+------------------------------------------------------------------------------
+             |               Robust
+      dlv_us | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    dlz_usch |   .3733816    .146744     2.54   0.011     .0856596    .6611036
+    dlz_chus |   .0500271   .1381336     0.36   0.717    -.2208125    .3208667
+     dlz_usi |   -1.69686   .3401144    -4.99   0.000    -2.363725   -1.029996
+    dlz_chrw |   .1658021   .2815839     0.59   0.556    -.3863014    .7179056
+  dlv_us_lag |  -.2359182   .0067697   -34.85   0.000    -.2491915   -.2226448
+     mv_v_us |   .2822259   .0274743    10.27   0.000     .2283569     .336095
+       _cons |   .0827882   .0208476     3.97   0.000     .0419123    .1236642
+------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+          cs |       429           0         429     |
+-----------------------------------------------------+
+********** P us v_cs **********
+********** CSQ us v_cs **********
+(MWFE estimator converged in 1 iterations)
+note: _c_dlz_usi_BGD omitted because of collinearity
+note: _c_dlz_usi_CHN omitted because of collinearity
+note: _c_dlz_chrw_CHN omitted because of collinearity
+note: _c_dlz_usch_USA omitted because of collinearity
+note: _c_dlz_chus_USA omitted because of collinearity
+note: _c_dlz_usi_USA omitted because of collinearity
+note: _c_dlz_chrw_USA omitted because of collinearity
+note: Q2b omitted because of collinearity
+note: Q3a omitted because of collinearity
+note: Q3b omitted because of collinearity
+note: Q3c omitted because of collinearity
+note: Q3d omitted because of collinearity
+note: Q4a omitted because of collinearity
+note: Q4b omitted because of collinearity
+note: Q4c omitted because of collinearity
+note: _Q3d_usi omitted because of collinearity
+
+HDFE Linear regression                            Number of obs   =    108,223
+Absorbing 1 HDFE group                            F( 246,   3203) =      11.15
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.0803
+                                                  Adj R-squared   =     0.0745
+                                                  Within R-sq.    =     0.0631
+Number of clusters (hs6)     =      3,204         Root MSE        =     1.2173
+
+                                (Std. err. adjusted for 3,204 clusters in hs6)
+------------------------------------------------------------------------------
+             |               Robust
+      dlv_us | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    dlz_usch |  -.0979587   .7387676    -0.13   0.895    -1.546464    1.350547
+    dlz_chus |   .6876239   .6509138     1.06   0.291     -.588626    1.963874
+     dlz_usi |   2.734218   5.609963     0.49   0.626    -8.265263     13.7337
+    dlz_chrw |   -.801818   1.114497    -0.72   0.472    -2.987017    1.383381
+_c_dlz~h_ARG |   1.180976   1.458741     0.81   0.418    -1.679185    4.041138
+_c_dlz~s_ARG |  -1.431026   1.323619    -1.08   0.280    -4.026253    1.164201
+_c_dlz~i_ARG |  -.4994217   4.174871    -0.12   0.905    -8.685112    7.686268
+_c_dlz~w_ARG |  -6.145225   3.240364    -1.90   0.058    -12.49862    .2081718
+_c_dlz~h_AUS |  -.8798219   1.073272    -0.82   0.412    -2.984191    1.224547
+_c_dlz~s_AUS |   .4919213   .9853647     0.50   0.618    -1.440088    2.423931
+_c_dlz~i_AUS |  -4.195219   4.126393    -1.02   0.309    -12.28586    3.895421
+_c_dlz~w_AUS |  -.1314158   2.140031    -0.06   0.951    -4.327384    4.064553
+_c_dlz~h_AUT |   .8003147   1.037961     0.77   0.441     -1.23482    2.835449
+_c_dlz~s_AUT |   .0257757   1.149694     0.02   0.982    -2.228435    2.279986
+_c_dlz~i_AUT |   2.443987     1.3877     1.76   0.078    -.2768835    5.164858
+_c_dlz~w_AUT |    1.74855   2.273777     0.77   0.442    -2.709656    6.206755
+_c_dlz~h_BEL |   .0404139   .9305824     0.04   0.965    -1.784184    1.865011
+_c_dlz~s_BEL |  -.3165807   1.059669    -0.30   0.765     -2.39428    1.761118
+_c_dlz~i_BEL |   4.061014   1.445769     2.81   0.005     1.226288    6.895741
+_c_dlz~w_BEL |   3.012803   1.897361     1.59   0.112    -.7073624    6.732968
+_c_dlz~h_BGD |   2.668941   2.681733     1.00   0.320    -2.589145    7.927028
+_c_dlz~s_BGD |  -2.156205   1.428474    -1.51   0.131    -4.957021    .6446101
+_c_dlz~i_BGD |          0  (omitted)
+_c_dlz~w_BGD |  -5.321022   4.193756    -1.27   0.205    -13.54374    2.901697
+_c_dlz~h_BGR |  -.8516315   1.454003    -0.59   0.558    -3.702502    1.999239
+_c_dlz~s_BGR |  -.5202937   1.490058    -0.35   0.727    -3.441858    2.401271
+_c_dlz~i_BGR |   15.35622   7.868961     1.95   0.051    -.0724931    30.78493
+_c_dlz~w_BGR |   2.283096   2.230906     1.02   0.306    -2.091053    6.657245
+_c_dlz~h_BRA |  -1.737642   .9329017    -1.86   0.063    -3.566787    .0915033
+_c_dlz~s_BRA |  -1.155646   .9278876    -1.25   0.213     -2.97496    .6636677
+_c_dlz~i_BRA |  -2.268053   2.345894    -0.97   0.334    -6.867659    2.331553
+_c_dlz~w_BRA |    2.29573   1.903793     1.21   0.228    -1.437046    6.028505
+_c_dlz~h_CAN |  -.7064445   .7763314    -0.91   0.363    -2.228601    .8157123
+_c_dlz~s_CAN |  -.4429779   .7366443    -0.60   0.548     -1.88732    1.001364
+_c_dlz~i_CAN |   3.380093   1.546399     2.19   0.029     .3480611    6.412125
+_c_dlz~w_CAN |   .5283854   1.508111     0.35   0.726    -2.428576    3.485347
+_c_dlz~h_CHE |  -.5619409   .9414251    -0.60   0.551    -2.407798    1.283916
+_c_dlz~s_CHE |  -1.518975   1.224283    -1.24   0.215    -3.919433    .8814836
+_c_dlz~i_CHE |   3.909843   2.093774     1.87   0.062    -.1954295    8.015115
+_c_dlz~w_CHE |  -1.149932   2.030137    -0.57   0.571    -5.130432    2.830568
+_c_dlz~h_CHL |   1.293927   1.526926     0.85   0.397    -1.699924    4.287777
+_c_dlz~s_CHL |  -1.323752    1.28627    -1.03   0.303    -3.845748    1.198244
+_c_dlz~i_CHL |  -13.27079   10.36355    -1.28   0.200    -33.59064    7.049067
+_c_dlz~w_CHL |  -.1259181   2.997177    -0.04   0.966    -6.002497    5.750661
+_c_dlz~h_CHN |  -2.345168   .7284478    -3.22   0.001    -3.773439   -.9168968
+_c_dlz~s_CHN |  -.4710902   .6992746    -0.67   0.501    -1.842161    .8999809
+_c_dlz~i_CHN |          0  (omitted)
+_c_dlz~w_CHN |          0  (omitted)
+_c_dlz~h_COL |   .0426443   1.267897     0.03   0.973    -2.443328    2.528617
+_c_dlz~s_COL |   1.008214    1.13302     0.89   0.374    -1.213303    3.229732
+_c_dlz~i_COL |  -1.662788   1.867841    -0.89   0.373    -5.325073    1.999497
+_c_dlz~w_COL |  -2.045155   2.143522    -0.95   0.340     -6.24797     2.15766
+_c_dlz~h_CZE |  -.4440812   1.036949    -0.43   0.668    -2.477233     1.58907
+_c_dlz~s_CZE |  -.7134929   1.056153    -0.68   0.499    -2.784297    1.357312
+_c_dlz~i_CZE |   2.019804   2.472688     0.82   0.414    -2.828408    6.868016
+_c_dlz~w_CZE |  -1.855471    2.33339    -0.80   0.427     -6.43056    2.719618
+_c_dlz~h_DNK |  -.0788677    .990307    -0.08   0.937    -2.020568    1.862832
+_c_dlz~s_DNK |  -2.136088   1.085377    -1.97   0.049    -4.264193   -.0079839
+_c_dlz~i_DNK |   3.570542   4.528857     0.79   0.431    -5.309209    12.45029
+_c_dlz~w_DNK |   1.354474   1.936328     0.70   0.484    -2.442094    5.151043
+_c_dlz_usc~Y |   1.057092   1.817754     0.58   0.561    -2.506986    4.621171
+_c_dlz_chu~Y |   1.868331    1.80844     1.03   0.302    -1.677487    5.414148
+_c_dlz_usi~Y |   5.233755   3.291751     1.59   0.112    -1.220398    11.68791
+_c_dlz_chr~Y |   .5523455   2.533498     0.22   0.827    -4.415097    5.519788
+_c_dlz~h_ESP |  -.1442279   .8971626    -0.16   0.872    -1.903299    1.614843
+_c_dlz~s_ESP |   .4866975   1.008671     0.48   0.629    -1.491009    2.464404
+_c_dlz~i_ESP |  -.2923257   1.811596    -0.16   0.872    -3.844331    3.259679
+_c_dlz~w_ESP |  -1.409281   1.744581    -0.81   0.419    -4.829889    2.011327
+_c_dlz~h_FIN |    1.05117   1.242031     0.85   0.397    -1.384086    3.486426
+_c_dlz~s_FIN |  -.2933361   1.288368    -0.23   0.820    -2.819446    2.232774
+_c_dlz~i_FIN |   .0008431   2.045652     0.00   1.000    -4.010077    4.011763
+_c_dlz~w_FIN |   1.787642   2.611876     0.68   0.494    -3.333477     6.90876
+_c_dlz~h_FRA |  -.9846179   .7460321    -1.32   0.187    -2.447367     .478131
+_c_dlz~s_FRA |  -.4715553   .8337045    -0.57   0.572    -2.106204    1.163093
+_c_dlz~i_FRA |  -.2793808    1.02284    -0.27   0.785    -2.284868    1.726106
+_c_dlz~w_FRA |   1.090553   1.485359     0.73   0.463    -1.821798    4.002905
+_c_dlz~h_GBR |  -.3971394   .7977685    -0.50   0.619    -1.961328    1.167049
+_c_dlz~s_GBR |   .1009818   .7969048     0.13   0.899    -1.461513    1.663477
+_c_dlz~i_GBR |  -3.058803   1.523814    -2.01   0.045    -6.046552   -.0710541
+_c_dlz~w_GBR |   1.325703   1.486666     0.89   0.373    -1.589211    4.240617
+_c_dlz_usc~C |  -1.046091   1.399546    -0.75   0.455    -3.790187    1.698005
+_c_dlz_chu~C |   -.747385   1.553862    -0.48   0.631    -3.794049     2.29928
+_c_dlz_usi~C |   3.861769   7.396888     0.52   0.602    -10.64135    18.36488
+_c_dlz_chr~C |  -1.743001   2.128103    -0.82   0.413    -5.915584    2.429582
+_c_dlz~h_HKG |  -2.000564   1.050059    -1.91   0.057    -4.059419    .0582909
+_c_dlz~s_HKG |  -1.106316   1.008273    -1.10   0.273    -3.083242    .8706094
+_c_dlz~i_HKG |  -1.025628   2.858326    -0.36   0.720    -6.629962    4.578706
+_c_dlz~w_HKG |   1.920903   1.775609     1.08   0.279    -1.560542    5.402349
+_c_dlz~h_HUN |  -1.217136   1.257796    -0.97   0.333    -3.683304    1.249031
+_c_dlz~s_HUN |   .9591419   1.332995     0.72   0.472    -1.654467    3.572751
+_c_dlz~i_HUN |   8.310077   3.004409     2.77   0.006     2.419318    14.20084
+_c_dlz~w_HUN |   1.334174   2.496229     0.53   0.593    -3.560195    6.228543
+_c_dlz~h_IDN |  -.5229963   1.285405    -0.41   0.684    -3.043297    1.997304
+_c_dlz~s_IDN |   .5835783   1.131249     0.52   0.606    -1.634468    2.801625
+_c_dlz~i_IDN |   .4642437   2.208652     0.21   0.834    -3.866272    4.794759
+_c_dlz~w_IDN |   .0549759   2.134853     0.03   0.979    -4.130841    4.240793
+_c_dlz~h_IND |  -.9923314   .7933834    -1.25   0.211    -2.547922    .5632594
+_c_dlz~s_IND |  -1.689298    .821827    -2.06   0.040    -3.300658   -.0779377
+_c_dlz~i_IND |   1.207699   1.581253     0.76   0.445    -1.892673     4.30807
+_c_dlz~w_IND |   2.408375   1.480097     1.63   0.104    -.4936593     5.31041
+_c_dlz~h_IRL |  -2.477959   1.188917    -2.08   0.037    -4.809074   -.1468436
+_c_dlz~s_IRL |   -.486619   1.279804    -0.38   0.704    -2.995937    2.022699
+_c_dlz~i_IRL |  -.1425513   2.046817    -0.07   0.944    -4.155755    3.870652
+_c_dlz~w_IRL |   1.996549   2.257405     0.88   0.377    -2.429557    6.422654
+_c_dlz~h_ISR |  -1.092421   1.036481    -1.05   0.292    -3.124655    .9398132
+_c_dlz~s_ISR |   .5872857   1.156738     0.51   0.612    -1.680736    2.855307
+_c_dlz~i_ISR |   1.645032   4.255383     0.39   0.699    -6.698518    9.988582
+_c_dlz~w_ISR |   1.736096   1.995745     0.87   0.384    -2.176972    5.649164
+_c_dlz~h_ITA |   .0922304   .7570726     0.12   0.903    -1.392166    1.576626
+_c_dlz~s_ITA |  -1.074113   .7873635    -1.36   0.173    -2.617901    .4696744
+_c_dlz~i_ITA |   .2929776   1.548013     0.19   0.850    -2.742218    3.328173
+_c_dlz~w_ITA |  -.6371823   1.286466    -0.50   0.620    -3.159563    1.885198
+_c_dlz~h_JPN |  -1.398429   .7339974    -1.91   0.057    -2.837582     .040723
+_c_dlz~s_JPN |  -.7552641   .8339313    -0.91   0.365    -2.390357    .8798292
+_c_dlz~i_JPN |   .2169734     1.1601     0.19   0.852     -2.05764    2.491587
+_c_dlz~w_JPN |  -1.208157   1.372072    -0.88   0.379    -3.898385    1.482071
+_c_dlz~h_KOR |  -.4334417   .8005078    -0.54   0.588    -2.003001    1.136118
+_c_dlz~s_KOR |  -.9299489   .8412499    -1.11   0.269    -2.579392    .7194938
+_c_dlz~i_KOR |  -2.596078   2.084807    -1.25   0.213     -6.68377    1.491614
+_c_dlz~w_KOR |   .2064098   1.602206     0.13   0.898    -2.935042    3.347862
+_c_dlz_usc~X |   .1658124   .8344785     0.20   0.843    -1.470354    1.801979
+_c_dlz_chu~X |    -.46864   .8206357    -0.57   0.568    -2.077664    1.140384
+_c_dlz_usi~X |   6.921714    2.41092     2.87   0.004     2.194611    11.64882
+_c_dlz_chr~X |   .5615689   1.425116     0.39   0.694    -2.232662      3.3558
+_c_dlz~h_MYS |   1.148347   1.162165     0.99   0.323    -1.130315    3.427009
+_c_dlz~s_MYS |   .4294835   1.196141     0.36   0.720    -1.915796    2.774763
+_c_dlz~i_MYS |   3.107297   2.246491     1.38   0.167    -1.297407    7.512002
+_c_dlz~w_MYS |   2.371349   2.453368     0.97   0.334    -2.438982    7.181679
+_c_dlz~h_NLD |  -.4171273   .8932895    -0.47   0.641    -2.168604     1.33435
+_c_dlz~s_NLD |  -.9226602   .9396127    -0.98   0.326    -2.764963    .9196429
+_c_dlz~i_NLD |   2.014089   1.854291     1.09   0.277    -1.621629    5.649807
+_c_dlz~w_NLD |  -1.094818   1.617142    -0.68   0.498    -4.265557    2.075921
+_c_dlz~h_NZL |  -.0344386   1.132491    -0.03   0.976     -2.25492    2.186043
+_c_dlz~s_NZL |  -.9779988   1.065688    -0.92   0.359    -3.067499    1.111501
+_c_dlz~i_NZL |  -3.745354   3.015035    -1.24   0.214    -9.656947    2.166239
+_c_dlz~w_NZL |   -.905238   2.580814    -0.35   0.726    -5.965452    4.154976
+_c_dlz~h_PER |    .469867   1.541266     0.30   0.760    -2.552101    3.491835
+_c_dlz~s_PER |  -.3058389   1.286131    -0.24   0.812    -2.827563    2.215885
+_c_dlz~i_PER |   3.806067   7.168974     0.53   0.596    -10.25018    17.86231
+_c_dlz~w_PER |   .3100885   2.071919     0.15   0.881    -3.752334    4.372511
+_c_dlz~h_PHL |  -.5932259   1.295904    -0.46   0.647    -3.134112     1.94766
+_c_dlz~s_PHL |   -.175681   1.069799    -0.16   0.870    -2.273241    1.921879
+_c_dlz~i_PHL |   4.707771   3.307239     1.42   0.155    -1.776748    11.19229
+_c_dlz~w_PHL |   1.336115   2.083067     0.64   0.521    -2.748165    5.420396
+_c_dlz~h_POL |  -.1134438    .990875    -0.11   0.909    -2.056257     1.82937
+_c_dlz~s_POL |   -1.32218   1.037816    -1.27   0.203    -3.357032    .7126714
+_c_dlz~i_POL |   3.321998    2.30175     1.44   0.149    -1.191054    7.835051
+_c_dlz~w_POL |    .673797   1.982525     0.34   0.734     -3.21335    4.560944
+_c_dlz~h_PRT |  -.3430275   1.122989    -0.31   0.760    -2.544878    1.858823
+_c_dlz~s_PRT |  -2.893163    1.11365    -2.60   0.009    -5.076703   -.7096233
+_c_dlz~i_PRT |  -4.452262   3.067207    -1.45   0.147    -10.46615    1.561626
+_c_dlz~w_PRT |  -3.862752   1.802174    -2.14   0.032    -7.396284   -.3292202
+_c_dlz_usc~U |   -.814973    1.61904    -0.50   0.615    -3.989432    2.359486
+_c_dlz_chu~U |  -.3827798   1.420911    -0.27   0.788    -3.168767    2.403207
+_c_dlz_usi~U |  -.7640236   5.816414    -0.13   0.896    -12.16829    10.64025
+_c_dlz_chr~U |   3.468077   2.728486     1.27   0.204    -1.881679    8.817833
+_c_dlz~h_SGP |  -.1615683   1.332323    -0.12   0.903     -2.77386    2.450724
+_c_dlz~s_SGP |  -1.028693   1.276422    -0.81   0.420     -3.53138    1.473993
+_c_dlz~i_SGP |  -2.072248   2.470881    -0.84   0.402    -6.916917    2.772421
+_c_dlz~w_SGP |   4.882222   2.890859     1.69   0.091     -.785899    10.55034
+_c_dlz~h_SVK |  -.4659449   1.612295    -0.29   0.773    -3.627179    2.695289
+_c_dlz~s_SVK |  -.6493965   1.802233    -0.36   0.719    -4.183043     2.88425
+_c_dlz~i_SVK |   .0802652   2.374917     0.03   0.973    -4.576245    4.736776
+_c_dlz~w_SVK |   2.914998   3.632436     0.80   0.422    -4.207137    10.03713
+_c_dlz~h_SVN |   .3252905   1.434792     0.23   0.821    -2.487913    3.138494
+_c_dlz~s_SVN |   2.353889   1.806834     1.30   0.193    -1.188781    5.896558
+_c_dlz~i_SVN |   4.052624   2.284034     1.77   0.076    -.4256937    8.530941
+_c_dlz~w_SVN |   .5609285   3.083484     0.18   0.856    -5.484874    6.606731
+_c_dlz~h_SWE |  -1.521022   1.030502    -1.48   0.140    -3.541532    .4994876
+_c_dlz~s_SWE |   .0283911   1.132692     0.03   0.980    -2.192484    2.249266
+_c_dlz~i_SWE |    3.38038    1.22447     2.76   0.006      .979556    5.781204
+_c_dlz~w_SWE |  -3.752607   2.315928    -1.62   0.105    -8.293459    .7882452
+_c_dlz~h_THA |    .039642   .9539697     0.04   0.967    -1.830811    1.910095
+_c_dlz~s_THA |  -.7511705   .9273587    -0.81   0.418    -2.569447    1.067106
+_c_dlz~i_THA |   4.716694   2.195868     2.15   0.032     .4112441    9.022144
+_c_dlz~w_THA |   2.092173    1.64516     1.27   0.204      -1.1335    5.317846
+_c_dlz~h_TUR |  -1.940036   1.097258    -1.77   0.077    -4.091435    .2113635
+_c_dlz~s_TUR |   .5606993   1.092677     0.51   0.608    -1.581719    2.703117
+_c_dlz~i_TUR |  -3.535531   1.914177    -1.85   0.065    -7.288668    .2176057
+_c_dlz~w_TUR |   3.715506     1.5944     2.33   0.020     .5893583    6.841654
+_c_dlz~h_TWN |  -.3846333   .8524346    -0.45   0.652    -2.056006    1.286739
+_c_dlz~s_TWN |  -.1400155   .9311755    -0.15   0.880    -1.965776    1.685745
+_c_dlz~i_TWN |  -.7161084   1.505769    -0.48   0.634    -3.668478    2.236261
+_c_dlz~w_TWN |    1.18326   1.575328     0.75   0.453    -1.905494    4.272013
+_c_dlz~h_UKR |  -3.511443   1.975525    -1.78   0.076    -7.384864     .361978
+_c_dlz~s_UKR |   -1.96976   1.988374    -0.99   0.322    -5.868374    1.928854
+_c_dlz~i_UKR |   4.737191   2.518222     1.88   0.060    -.2002999    9.674681
+_c_dlz~w_UKR |   2.399002   2.206341     1.09   0.277    -1.926983    6.724986
+_c_dlz~h_USA |          0  (omitted)
+_c_dlz~s_USA |          0  (omitted)
+_c_dlz~i_USA |          0  (omitted)
+_c_dlz~w_USA |          0  (omitted)
+_c_dlz_usc~M |   1.643557   1.126227     1.46   0.145    -.5646421    3.851757
+_c_dlz_chu~M |  -.1646274   1.105307    -0.15   0.882    -2.331808    2.002553
+_c_dlz_usi~M |    .199803   1.725817     0.12   0.908    -3.184015    3.583621
+_c_dlz_chr~M |   .8840003   1.776464     0.50   0.619    -2.599122    4.367123
+_c_dlz_usc~F |   -1.95418   1.158931    -1.69   0.092    -4.226501    .3181413
+_c_dlz_chu~F |  -.5266927   1.032312    -0.51   0.610    -2.550752    1.497367
+_c_dlz_usi~F |   .7831332   2.040216     0.38   0.701    -3.217128    4.783394
+_c_dlz_chr~F |   .4482681   1.970782     0.23   0.820    -3.415854     4.31239
+_s_dlz_usc~l |   .8716459   .6917246     1.26   0.208     -.484622    2.227914
+_s_dlz_chu~l |  -.5123947   .4130863    -1.24   0.215    -1.322335    .2975456
+_s_dlz_usi~l |   7.488825    7.86794     0.95   0.341    -7.937884    22.91553
+_s_dlz_chr~l |  -.8478683   .9138282    -0.93   0.354    -2.639616    .9438792
+~h_Chemicals |   .1678285   .7707577     0.22   0.828      -1.3434    1.679057
+~s_Chemicals |   .0239247   .5801392     0.04   0.967    -1.113557    1.161407
+~i_Chemicals |   35.30735   17.02852     2.07   0.038     1.919447    68.69526
+~w_Chemicals |  -5.977408   4.049817    -1.48   0.140     -13.9179    1.963087
+_s_dlz_usc~y |   .7844583   .5603684     1.40   0.162    -.3142587    1.883175
+_s_dlz_chu~y |   .1128596    .425486     0.27   0.791    -.7213928    .9471121
+_s_dlz_usi~y |  -7.090372   5.745323    -1.23   0.217    -18.35525    4.174512
+_s_dlz_chr~y |   1.525912   1.490108     1.02   0.306    -1.395751    4.447575
+~h_Materials |   1.756073   .5843153     3.01   0.003     .6104029    2.901742
+~s_Materials |    .894123   .4793949     1.87   0.062    -.0458289    1.834075
+~i_Materials |  -2.552468   16.57753    -0.15   0.878    -35.05612    29.95118
+~w_Materials |   1.033588   .7664199     1.35   0.178    -.4691349    2.536312
+_s_~h_Metals |   .6320878    .688114     0.92   0.358    -.7171006    1.981276
+_s_~s_Metals |   .3139563   .5207866     0.60   0.547    -.7071526    1.335065
+_s_~i_Metals |  -6.214922   5.540063    -1.12   0.262    -17.07735    4.647507
+_s_~w_Metals |   .8274759   1.317585     0.63   0.530     -1.75592    3.410872
+_~h_Minerals |    1.28228   1.201276     1.07   0.286    -1.073068    3.637627
+_~s_Minerals |  -.5651986   .9639694    -0.59   0.558    -2.455258    1.324861
+_~i_Minerals |  -144751.7   381769.4    -0.38   0.705      -893289    603785.5
+_~w_Minerals |   18.75407   14.64037     1.28   0.200    -9.951379    47.45953
+_s_dlz_usc.. |   .5528175    .593088     0.93   0.351    -.6100531    1.715688
+_s_dlz_chu.. |  -.6453996    .511059    -1.26   0.207    -1.647436    .3566363
+_s_dlz_usi.. |  -22.99287   14.60791    -1.57   0.116    -51.63466    5.648925
+_s_dlz_chr.. |   1.961262   .7921929     2.48   0.013     .4080052    3.514518
+_s_dlz_usc~t |  -.1909198   .8846726    -0.22   0.829    -1.925502    1.543662
+_s_dlz_chu~t |   -.257001   .7767788    -0.33   0.741    -1.780035    1.266033
+_s_dlz_usi~t |  -164.3539   81.31001    -2.02   0.043    -323.7788   -4.928971
+_s_dlz_chr~t |   1.631601   2.772233     0.59   0.556     -3.80393    7.067131
+         Q1a |  -.2611494    .110857    -2.36   0.019    -.4785072   -.0437916
+         Q1b |   .6598269   .2421039     2.73   0.006     .1851326    1.134521
+         Q1c |  -.7148527   .1284497    -5.57   0.000    -.9667046   -.4630008
+         Q2a |  -.1276953   .1348856    -0.95   0.344    -.3921663    .1367756
+         Q2b |          0  (omitted)
+         Q2c |  -.0004651   .0004231    -1.10   0.272    -.0012946    .0003645
+         Q3a |          0  (omitted)
+         Q3b |          0  (omitted)
+         Q3c |          0  (omitted)
+         Q3d |          0  (omitted)
+         Q4a |          0  (omitted)
+         Q4b |          0  (omitted)
+         Q4c |          0  (omitted)
+         Q4d |  -.0626275   .0704773    -0.89   0.374    -.2008126    .0755576
+   _Q1a_usch |   1.682991   1.245316     1.35   0.177     -.758706    4.124688
+   _Q1b_usch |  -.5076358   2.190389    -0.23   0.817    -4.802342    3.787071
+   _Q1c_usch |  -.2525118   1.325295    -0.19   0.849    -2.851025    2.346001
+   _Q2a_chus |  -1.247205    1.24678    -1.00   0.317    -3.691772    1.197363
+   _Q2b_chus |   .4426658   .9991826     0.44   0.658    -1.516436    2.401768
+   _Q2c_chus |   .0051785   .0014675     3.53   0.000     .0023012    .0080557
+    _Q3a_usi |    8.27625   3.512391     2.36   0.019     1.389487    15.16301
+    _Q3b_usi |    4.92347   4.674111     1.05   0.292    -4.241081    14.08802
+    _Q3c_usi |  -.7130334   2.309375    -0.31   0.758    -5.241036    3.814969
+    _Q3d_usi |          0  (omitted)
+   _Q4a_chrw |  -1.040879    6.37142    -0.16   0.870    -13.53335    11.45159
+   _Q4b_chrw |   1.721167   4.071095     0.42   0.672    -6.261049    9.703384
+   _Q4c_chrw |   2.161915   2.589009     0.84   0.404    -2.914368    7.238199
+   _Q4d_chrw |   .2275141   1.815964     0.13   0.900    -3.333055    3.788084
+  dlv_us_lag |   -.232522   .0066548   -34.94   0.000    -.2455702   -.2194738
+     mv_v_us |   .2708999   .0276261     9.81   0.000     .2167333    .3250665
+       _cons |   .1207621    .032006     3.77   0.000     .0580078    .1835165
+------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+          cs |       438           0         438     |
+-----------------------------------------------------+
+********** CSQ us v_cs **********
+(222,400 real changes made)
+(257,500 real changes made)
+(209,874 real changes made)
+(239,708 real changes made)
+(115,418 real changes made)
+(123,911 real changes made)
+(213,798 real changes made)
+(245,150 real changes made)
+(207,265 real changes made)
+(239,778 real changes made)
+(95,023 real changes made)
+(104,853 real changes made)
+(9,418 real changes made)
+(257,500 real changes made)
+(8,861 real changes made)
+(239,883 real changes made)
+(4,212 real changes made)
+(123,890 real changes made)
+(0 real changes made)
+(0 real changes made)
+(99,712 real changes made)
+(245,150 real changes made)
+(98,569 real changes made)
+(240,054 real changes made)
+(58,994 real changes made)
+(123,937 real changes made)
+(49,310 real changes made)
+(107,898 real changes made)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+
+Duplicates in terms of all variables
+
+(96,400 observations deleted)
+  (0 bytes saved)
+(file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_beta_v_cs_us_bs42.dta not found)
+file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_beta_v_cs_us_bs42.dta saved
+(245,281 real changes made)
+(245,281 real changes made)
+(245,281 real changes made)
+(202,076 real changes made)
+(243,611 real changes made)
+(108,210 real changes made)
+  (0 bytes saved)
+(file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_yhat_v_cs_us_bs42.dta not found)
+file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_yhat_v_cs_us_bs42.dta saved
+file /tmp/7227594.1.debian.q/St12074.000005 saved as .dta format
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                           260,150  
+    -----------------------------------------
+(167,548 missing values generated)
+       sw_ch: 167548 missing values recoded
+(18,825 missing values generated)
+(18,825 missing values generated)
+(18,825 missing values generated)
+(7,604 missing values generated)
+(18,825 missing values generated)
+(18,825 missing values generated)
+         Q1c: 18825 missing values recoded
+         Q2c: 18825 missing values recoded
+         Q3c: 18825 missing values recoded
+         Q3d: 7604 missing values recoded
+         Q4c: 18825 missing values recoded
+         Q4d: 18825 missing values recoded
+(file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /regs_v_cs_ch_bs42.dta not found)
+file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /regs_v_cs_ch_bs42.dta saved
+********** P ch v_cs **********
+(MWFE estimator converged in 1 iterations)
+
+HDFE Linear regression                            Number of obs   =     88,419
+Absorbing 1 HDFE group                            F(   6,   2996) =     230.75
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.0869
+                                                  Adj R-squared   =     0.0824
+                                                  Within R-sq.    =     0.0658
+Number of clusters (hs6)     =      2,997         Root MSE        =     1.7697
+
+                                (Std. err. adjusted for 2,997 clusters in hs6)
+------------------------------------------------------------------------------
+             |               Robust
+      dlv_ch | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    dlz_usch |  -.7168438   .2507448    -2.86   0.004    -1.208493   -.2251945
+    dlz_chus |   .1105625   .3318935     0.33   0.739    -.5401998    .7613248
+     dlz_usi |  -.2429228   .4048505    -0.60   0.549    -1.036736    .5508903
+    dlz_chrw |  -1.826223   .5140646    -3.55   0.000    -2.834178   -.8182673
+  dlv_ch_lag |   -.277283   .0076843   -36.08   0.000      -.29235    -.262216
+     mv_v_ch |   .3231886    .043875     7.37   0.000     .2371604    .4092169
+       _cons |   .1632293   .0398019     4.10   0.000     .0851876     .241271
+------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+          cs |       432           0         432     |
+-----------------------------------------------------+
+********** P ch v_cs **********
+********** CSQ ch v_cs **********
+(MWFE estimator converged in 1 iterations)
+note: _c_dlz_usch_CHN omitted because of collinearity
+note: _c_dlz_chus_CHN omitted because of collinearity
+note: _c_dlz_usi_CHN omitted because of collinearity
+note: _c_dlz_chrw_CHN omitted because of collinearity
+note: _c_dlz_usi_PER omitted because of collinearity
+note: _c_dlz_usi_USA omitted because of collinearity
+note: _c_dlz_chrw_USA omitted because of collinearity
+note: Q2b omitted because of collinearity
+note: Q3a omitted because of collinearity
+note: Q3b omitted because of collinearity
+note: Q3c omitted because of collinearity
+note: Q4a omitted because of collinearity
+note: Q4b omitted because of collinearity
+note: Q4c omitted because of collinearity
+note: Q4d omitted because of collinearity
+note: _Q4d_chrw omitted because of collinearity
+
+HDFE Linear regression                            Number of obs   =     92,602
+Absorbing 1 HDFE group                            F( 246,   3026) =      11.67
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.1019
+                                                  Adj R-squared   =     0.0952
+                                                  Within R-sq.    =     0.0809
+Number of clusters (hs6)     =      3,027         Root MSE        =     1.7413
+
+                                (Std. err. adjusted for 3,027 clusters in hs6)
+------------------------------------------------------------------------------
+             |               Robust
+      dlv_ch | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    dlz_usch |  -1.137853   1.218619    -0.93   0.351    -3.527258    1.251552
+    dlz_chus |   -.848037   1.014087    -0.84   0.403    -2.836406    1.140332
+     dlz_usi |   6.682904   23.11504     0.29   0.773    -38.63988    52.00569
+    dlz_chrw |   -.313501   1.555791    -0.20   0.840    -3.364015    2.737013
+_c_dlz~h_ARG |  -.2627747   3.049405    -0.09   0.931     -6.24189     5.71634
+_c_dlz~s_ARG |  -.7411967   2.059006    -0.36   0.719    -4.778389    3.295995
+_c_dlz~i_ARG |   1.624123   2.327742     0.70   0.485    -2.939992    6.188238
+_c_dlz~w_ARG |   13.92161   7.640328     1.82   0.069    -1.059149    28.90237
+_c_dlz~h_AUS |   1.060874   1.404666     0.76   0.450    -1.693324    3.815071
+_c_dlz~s_AUS |   .8011554   1.395378     0.57   0.566     -1.93483    3.537141
+_c_dlz~i_AUS |  -.1394382   2.939717    -0.05   0.962    -5.903482    5.624606
+_c_dlz~w_AUS |  -5.814943   2.845203    -2.04   0.041    -11.39367   -.2362169
+_c_dlz~h_AUT |   .9441971   1.309709     0.72   0.471    -1.623813    3.512207
+_c_dlz~s_AUT |  -.3249205   1.521173    -0.21   0.831    -3.307558    2.657717
+_c_dlz~i_AUT |   3.786378   1.891378     2.00   0.045     .0778618    7.494894
+_c_dlz~w_AUT |   2.275242   3.346996     0.68   0.497    -4.287374    8.837857
+_c_dlz~h_BEL |    2.83227   1.368878     2.07   0.039     .1482446    5.516295
+_c_dlz~s_BEL |   1.807342   1.448912     1.25   0.212     -1.03361    4.648295
+_c_dlz~i_BEL |   .9395702   2.083596     0.45   0.652    -3.145836    5.024977
+_c_dlz~w_BEL |   1.136293   2.851752     0.40   0.690    -4.455275    6.727862
+_c_dlz~h_BGD |  -8.814413    4.34285    -2.03   0.042    -17.32965   -.2991782
+_c_dlz~s_BGD |   1.059851   5.545401     0.19   0.848    -9.813285    11.93299
+_c_dlz~i_BGD |   25.79502   8.511647     3.03   0.002     9.105819    42.48421
+_c_dlz~w_BGD |   2.864304   5.936592     0.48   0.629     -8.77586    14.50447
+_c_dlz~h_BGR |  -.0182793   3.429806    -0.01   0.996    -6.743266    6.706708
+_c_dlz~s_BGR |   4.582014   2.536822     1.81   0.071     -.392056    9.556084
+_c_dlz~i_BGR |   10.56561   6.475128     1.63   0.103    -2.130487     23.2617
+_c_dlz~w_BGR |   1.913351   6.897913     0.28   0.782    -11.61172    15.43842
+_c_dlz~h_BRA |   .0316531   2.020229     0.02   0.988    -3.929507    3.992814
+_c_dlz~s_BRA |    2.71402   1.706704     1.59   0.112    -.6323964    6.060436
+_c_dlz~i_BRA |  -6.173135   5.103417    -1.21   0.227    -16.17965    3.833382
+_c_dlz~w_BRA |  -1.366437   3.851451    -0.35   0.723    -8.918162    6.185288
+_c_dlz~h_CAN |  -.5851083   1.327903    -0.44   0.660    -3.188791    2.018575
+_c_dlz~s_CAN |   2.336159   1.290323     1.81   0.070    -.1938399    4.866159
+_c_dlz~i_CAN |    3.83725   4.083961     0.94   0.348     -4.17037    11.84487
+_c_dlz~w_CAN |  -1.061466   3.382545    -0.31   0.754    -7.693786    5.570853
+_c_dlz~h_CHE |   3.679394   1.290412     2.85   0.004      1.14922    6.209567
+_c_dlz~s_CHE |   1.080707   1.546468     0.70   0.485    -1.951527    4.112941
+_c_dlz~i_CHE |  -1.864578   3.274661    -0.57   0.569    -8.285363    4.556208
+_c_dlz~w_CHE |   4.699931   3.132555     1.50   0.134     -1.44222    10.84208
+_c_dlz~h_CHL |  -.5724492   2.859296    -0.20   0.841    -6.178809     5.03391
+_c_dlz~s_CHL |   5.239422    2.50601     2.09   0.037     .3257673    10.15308
+_c_dlz~i_CHL |   3.385936   3.469674     0.98   0.329    -3.417221    10.18909
+_c_dlz~w_CHL |  -3.103721   5.013382    -0.62   0.536     -12.9337    6.726259
+_c_dlz~h_CHN |          0  (omitted)
+_c_dlz~s_CHN |          0  (omitted)
+_c_dlz~i_CHN |          0  (omitted)
+_c_dlz~w_CHN |          0  (omitted)
+_c_dlz~h_COL |  -1.524752   5.132771    -0.30   0.766    -11.58882     8.53932
+_c_dlz~s_COL |  -5.156631   3.701769    -1.39   0.164    -12.41487    2.101605
+_c_dlz~i_COL |   74.50529   11.39868     6.54   0.000     52.15534    96.85523
+_c_dlz~w_COL |    -34.553    9.35057    -3.70   0.000    -52.88711   -16.21888
+_c_dlz~h_CZE |   3.360433   1.491782     2.25   0.024     .4354246    6.285441
+_c_dlz~s_CZE |  -.9058612   1.622211    -0.56   0.577    -4.086608    2.274885
+_c_dlz~i_CZE |  -.3922824   2.693733    -0.15   0.884    -5.674015     4.88945
+_c_dlz~w_CZE |   3.207594   3.456774     0.93   0.354    -3.570269    9.985457
+_c_dlz~h_DNK |   .5953548   1.308794     0.45   0.649    -1.970862    3.161571
+_c_dlz~s_DNK |   1.061949   1.361417     0.78   0.435    -1.607447    3.731345
+_c_dlz~i_DNK |  -1.654308   2.654322    -0.62   0.533    -6.858764    3.550149
+_c_dlz~w_DNK |   1.483691    3.50457     0.42   0.672    -5.387889     8.35527
+_c_dlz_usc~Y |  -6.558132   4.262225    -1.54   0.124    -14.91528    1.799018
+_c_dlz_chu~Y |   6.207337   3.204266     1.94   0.053    -.0754213     12.4901
+_c_dlz_usi~Y |   -10.4288   3.067209    -3.40   0.001    -16.44283    -4.41478
+_c_dlz_chr~Y |   8.734665   4.209137     2.08   0.038     .4816067    16.98772
+_c_dlz~h_ESP |   .7019335   1.062193     0.66   0.509     -1.38076    2.784627
+_c_dlz~s_ESP |   1.869669   1.281338     1.46   0.145     -.642713    4.382051
+_c_dlz~i_ESP |   .3378116   2.353212     0.14   0.886    -4.276245    4.951868
+_c_dlz~w_ESP |   1.341594   1.961347     0.68   0.494    -2.504114    5.187302
+_c_dlz~h_FIN |   2.948736   1.462557     2.02   0.044     .0810296    5.816442
+_c_dlz~s_FIN |   1.277448   1.548022     0.83   0.409    -1.757834     4.31273
+_c_dlz~i_FIN |   .0513429   2.439075     0.02   0.983    -4.731068    4.833754
+_c_dlz~w_FIN |   7.388577   3.816512     1.94   0.053    -.0946418     14.8718
+_c_dlz~h_FRA |   .8796222   1.009083     0.87   0.383    -1.098935     2.85818
+_c_dlz~s_FRA |  -.3726309   1.177763    -0.32   0.752    -2.681928    1.936666
+_c_dlz~i_FRA |   .1695517   1.688717     0.10   0.920    -3.141597      3.4807
+_c_dlz~w_FRA |   1.450891   2.100417     0.69   0.490    -2.667498     5.56928
+_c_dlz~h_GBR |   .0151637   1.059073     0.01   0.989    -2.061412     2.09174
+_c_dlz~s_GBR |   1.523755   1.209909     1.26   0.208    -.8485707    3.896082
+_c_dlz~i_GBR |   .5982941   1.487262     0.40   0.688    -2.317853    3.514441
+_c_dlz~w_GBR |  -.7471799   1.868488    -0.40   0.689    -4.410814    2.916454
+_c_dlz_usc~C |   3.085767   2.447062     1.26   0.207    -1.712306     7.88384
+_c_dlz_chu~C |   .2359889   2.222221     0.11   0.915    -4.121228    4.593206
+_c_dlz_usi~C |  -14.91176   6.914172    -2.16   0.031    -28.46871   -1.354812
+_c_dlz_chr~C |     .11414   4.652156     0.02   0.980    -9.007566    9.235846
+_c_dlz~h_HKG |   .0436168   1.700987     0.03   0.980     -3.29159    3.378824
+_c_dlz~s_HKG |   3.147482    1.52831     2.06   0.040     .1508495    6.144114
+_c_dlz~i_HKG |  -5.850859   2.954143    -1.98   0.048    -11.64319    -.058529
+_c_dlz~w_HKG |   1.832945   3.293475     0.56   0.578    -4.624731    8.290621
+_c_dlz~h_HUN |   2.351567   1.854288     1.27   0.205    -1.284225    5.987358
+_c_dlz~s_HUN |  -.3285669   1.930796    -0.17   0.865    -4.114372    3.457238
+_c_dlz~i_HUN |   4.061339   5.100257     0.80   0.426    -5.938981    14.06166
+_c_dlz~w_HUN |  -3.736093   4.255805    -0.88   0.380    -12.08066    4.608468
+_c_dlz~h_IDN |   1.295507   1.667445     0.78   0.437    -1.973932    4.564946
+_c_dlz~s_IDN |  -2.068435   1.481607    -1.40   0.163    -4.973493    .8366224
+_c_dlz~i_IDN |  -.0055161   4.764964    -0.00   0.999    -9.348411    9.337379
+_c_dlz~w_IDN |   5.851422   2.663769     2.20   0.028     .6284418     11.0744
+_c_dlz~h_IND |   1.592345   1.237118     1.29   0.198    -.8333332    4.018022
+_c_dlz~s_IND |   .4886965   1.258136     0.39   0.698    -1.978192    2.955585
+_c_dlz~i_IND |  -3.514174    2.63866    -1.33   0.183    -8.687922    1.659575
+_c_dlz~w_IND |   3.081748   2.438734     1.26   0.206    -1.699996    7.863492
+_c_dlz~h_IRL |   2.200322   2.284022     0.96   0.335    -2.278069    6.678714
+_c_dlz~s_IRL |   6.388801   2.740198     2.33   0.020     1.015963    11.76164
+_c_dlz~i_IRL |  -4.345707   6.580788    -0.66   0.509    -17.24897    8.557561
+_c_dlz~w_IRL |   6.689537   4.686786     1.43   0.154    -2.500071    15.87915
+_c_dlz~h_ISR |   1.132711   1.924011     0.59   0.556     -2.63979    4.905211
+_c_dlz~s_ISR |   1.242262   2.306729     0.54   0.590    -3.280652    5.765177
+_c_dlz~i_ISR |  -11.10247   4.066408    -2.73   0.006    -19.07567   -3.129266
+_c_dlz~w_ISR |  -6.521535   4.534267    -1.44   0.150    -15.41209    2.369022
+_c_dlz~h_ITA |   1.456059   .9249533     1.57   0.116    -.3575412     3.26966
+_c_dlz~s_ITA |   1.148019   1.004495     1.14   0.253     -.821542     3.11758
+_c_dlz~i_ITA |   2.666183   1.835847     1.45   0.147    -.9334515    6.265818
+_c_dlz~w_ITA |   -1.61522   1.936786    -0.83   0.404     -5.41277    2.182329
+_c_dlz~h_JPN |   .8121899   .8163155     0.99   0.320    -.7883992    2.412779
+_c_dlz~s_JPN |   .5882954   .9491686     0.62   0.535    -1.272785    2.449376
+_c_dlz~i_JPN |   .5172938   1.256594     0.41   0.681    -1.946571    2.981159
+_c_dlz~w_JPN |  -.4979778   1.700403    -0.29   0.770    -3.832039    2.836084
+_c_dlz~h_KOR |   2.831608   1.098578     2.58   0.010     .6775729    4.985643
+_c_dlz~s_KOR |   .0947105   1.160258     0.08   0.935    -2.180263    2.369684
+_c_dlz~i_KOR |   2.382727   2.178169     1.09   0.274    -1.888114    6.653568
+_c_dlz~w_KOR |   1.367931   2.095487     0.65   0.514    -2.740791    5.476653
+_c_dlz_usc~X |   4.399301   1.461519     3.01   0.003      1.53363    7.264971
+_c_dlz_chu~X |   .4144644    1.71504     0.24   0.809    -2.948297    3.777225
+_c_dlz_usi~X |  -4.701274   3.372339    -1.39   0.163    -11.31358    1.911035
+_c_dlz_chr~X |   -3.68688   3.526985    -1.05   0.296    -10.60241     3.22865
+_c_dlz~h_MYS |   3.727789   1.536855     2.43   0.015      .714404    6.741174
+_c_dlz~s_MYS |  -.7408907   1.704199    -0.43   0.664    -4.082396    2.600615
+_c_dlz~i_MYS |  -.5833067   3.149381    -0.19   0.853    -6.758451    5.591837
+_c_dlz~w_MYS |  -.3660181   3.334684    -0.11   0.913    -6.904494    6.172458
+_c_dlz~h_NLD |    .380295   1.158672     0.33   0.743     -1.89157     2.65216
+_c_dlz~s_NLD |  -.7846996   1.248068    -0.63   0.530    -3.231847    1.662447
+_c_dlz~i_NLD |  -2.361163   2.517178    -0.94   0.348    -7.296716    2.574389
+_c_dlz~w_NLD |  -2.716984   2.944029    -0.92   0.356    -8.489484    3.055516
+_c_dlz~h_NZL |   1.037196   1.972844     0.53   0.599    -2.831055    4.905447
+_c_dlz~s_NZL |   4.329338   1.747592     2.48   0.013     .9027492    7.755926
+_c_dlz~i_NZL |  -7.847235   4.262337    -1.84   0.066     -16.2046    .5101351
+_c_dlz~w_NZL |   2.569783   3.641227     0.71   0.480    -4.569746    9.709311
+_c_dlz~h_PER |  -5.089264   3.352921    -1.52   0.129     -11.6635     1.48497
+_c_dlz~s_PER |    -.94927   1.633921    -0.58   0.561    -4.152977    2.254437
+_c_dlz~i_PER |          0  (omitted)
+_c_dlz~w_PER |    4.01338   4.135679     0.97   0.332    -4.095645    12.12241
+_c_dlz~h_PHL |   3.974975   2.141179     1.86   0.063    -.2233386    8.173289
+_c_dlz~s_PHL |  -6.651633   2.067441    -3.22   0.001    -10.70536   -2.597903
+_c_dlz~i_PHL |  -6.826446   10.08558    -0.68   0.499    -26.60172    12.94883
+_c_dlz~w_PHL |  -.3008309   3.578845    -0.08   0.933    -7.318044    6.716383
+_c_dlz~h_POL |  -1.254186   1.601362    -0.78   0.434    -4.394054    1.885683
+_c_dlz~s_POL |    .064785   1.646172     0.04   0.969    -3.162943    3.292513
+_c_dlz~i_POL |   1.084209    2.76431     0.39   0.695    -4.335908    6.504325
+_c_dlz~w_POL |   4.217481   3.135455     1.35   0.179    -1.930356    10.36532
+_c_dlz~h_PRT |   .8559846   1.667387     0.51   0.608    -2.413341     4.12531
+_c_dlz~s_PRT |   1.411662   1.838779     0.77   0.443    -2.193721    5.017046
+_c_dlz~i_PRT |  -5.443303   3.169306    -1.72   0.086    -11.65751     .770908
+_c_dlz~w_PRT |   .0552859   2.838634     0.02   0.984    -5.510561    5.621133
+_c_dlz_usc~U |   2.536809    2.48496     1.02   0.307    -2.335572    7.409189
+_c_dlz_chu~U |   2.038394   1.991037     1.02   0.306    -1.865529    5.942316
+_c_dlz_usi~U |  -.6167422   3.613063    -0.17   0.864    -7.701049    6.467565
+_c_dlz_chr~U |  -1.448207    5.18932    -0.28   0.780    -11.62316    8.726743
+_c_dlz~h_SGP |   2.643059   1.699899     1.55   0.120    -.6900149    5.976133
+_c_dlz~s_SGP |   1.315721   1.699983     0.77   0.439    -2.017517    4.648959
+_c_dlz~i_SGP |  -1.084385   2.429793    -0.45   0.655    -5.848597    3.679827
+_c_dlz~w_SGP |   3.622378   3.465042     1.05   0.296    -3.171697    10.41645
+_c_dlz~h_SVK |   1.689426   2.078924     0.81   0.416    -2.386821    5.765674
+_c_dlz~s_SVK |  -1.546825    2.38647    -0.65   0.517    -6.226093    3.132443
+_c_dlz~i_SVK |   2.572597   4.564313     0.56   0.573    -6.376872    11.52207
+_c_dlz~w_SVK |   5.925661   4.559172     1.30   0.194    -3.013728    14.86505
+_c_dlz~h_SVN |  -.5362035   2.050655    -0.26   0.794    -4.557022    3.484615
+_c_dlz~s_SVN |    3.85827   2.229452     1.73   0.084    -.5131233    8.229664
+_c_dlz~i_SVN |  -5.105342   4.492351    -1.14   0.256    -13.91371    3.703026
+_c_dlz~w_SVN |   8.239924   4.955459     1.66   0.096    -1.476483    17.95633
+_c_dlz~h_SWE |   1.627504   1.227337     1.33   0.185    -.7789956    4.034003
+_c_dlz~s_SWE |    .028168   1.461212     0.02   0.985    -2.836901    2.893237
+_c_dlz~i_SWE |   1.849267   2.011713     0.92   0.358    -2.095195    5.793729
+_c_dlz~w_SWE |   4.270934   3.618132     1.18   0.238    -2.823312    11.36518
+_c_dlz~h_THA |   1.539343   1.494426     1.03   0.303    -1.390851    4.469537
+_c_dlz~s_THA |   2.614194   1.336396     1.96   0.051    -.0061419    5.234529
+_c_dlz~i_THA |  -5.601021   3.591295    -1.56   0.119    -12.64265    1.440605
+_c_dlz~w_THA |   3.511535   2.498709     1.41   0.160    -1.387804    8.410875
+_c_dlz~h_TUR |   3.849496    1.49626     2.57   0.010     .9157077    6.783285
+_c_dlz~s_TUR |   4.652538   1.792347     2.60   0.009     1.138196     8.16688
+_c_dlz~i_TUR |  -1.731419   2.840301    -0.61   0.542    -7.300534    3.837697
+_c_dlz~w_TUR |   1.541408   2.755202     0.56   0.576     -3.86085    6.943665
+_c_dlz~h_TWN |   1.333962   .9541403     1.40   0.162    -.5368668    3.204791
+_c_dlz~s_TWN |    2.28607   1.098157     2.08   0.037     .1328609    4.439279
+_c_dlz~i_TWN |  -.3518213   1.346447    -0.26   0.794    -2.991864    2.288222
+_c_dlz~w_TWN |   -1.02337   2.420184    -0.42   0.672     -5.76874    3.722001
+_c_dlz~h_UKR |  -6.370633   3.575671    -1.78   0.075    -13.38162    .6403583
+_c_dlz~s_UKR |  -2.381755   2.756879    -0.86   0.388    -7.787301     3.02379
+_c_dlz~i_UKR |   6.259382   5.754733     1.09   0.277      -5.0242    17.54296
+_c_dlz~w_UKR |   13.14859    5.51992     2.38   0.017     2.325418    23.97177
+_c_dlz~h_USA |  -.2886299   .8794187    -0.33   0.743    -2.012948    1.435689
+_c_dlz~s_USA |  -2.116977   1.084595    -1.95   0.051    -4.243595    .0096414
+_c_dlz~i_USA |          0  (omitted)
+_c_dlz~w_USA |          0  (omitted)
+_c_dlz_usc~M |   .0389451   1.734804     0.02   0.982     -3.36257     3.44046
+_c_dlz_chu~M |  -.5095529   1.599711    -0.32   0.750    -3.646184    2.627078
+_c_dlz_usi~M |  -4.662717   3.070906    -1.52   0.129    -10.68399    1.358556
+_c_dlz_chr~M |    2.69438   3.163986     0.85   0.395      -3.5094     8.89816
+_c_dlz_usc~F |   .3706806   2.568115     0.14   0.885    -4.664747    5.406108
+_c_dlz_chu~F |    1.87663   2.393703     0.78   0.433     -2.81682     6.57008
+_c_dlz_usi~F |   6.804525   3.296492     2.06   0.039     .3409335    13.26812
+_c_dlz_chr~F |   8.063572   4.764975     1.69   0.091    -1.279344    17.40649
+_s_dlz_usc~l |  -1.696119   1.285497    -1.32   0.187    -4.216654    .8244166
+_s_dlz_chu~l |   .0556274   .8416281     0.07   0.947    -1.594593    1.705848
+_s_dlz_usi~l |  -9.087453    41.1135    -0.22   0.825    -89.70069    71.52578
+_s_dlz_chr~l |  -1.198026   1.709489    -0.70   0.483    -4.549904    2.153852
+~h_Chemicals |  -1.138057   1.153993    -0.99   0.324    -3.400747    1.124633
+~s_Chemicals |   2.285196   1.014468     2.25   0.024       .29608    4.274312
+~i_Chemicals |   100.9486   56.43416     1.79   0.074    -9.704567    211.6018
+~w_Chemicals |  -23.29728   8.416321    -2.77   0.006    -39.79956   -6.794991
+_s_dlz_usc~y |   .4267363   1.023681     0.42   0.677    -1.580445    2.433918
+_s_dlz_chu~y |   .1597922   .8701724     0.18   0.854    -1.546397    1.865981
+_s_dlz_usi~y |  -7.018176   23.06634    -0.30   0.761    -52.24546    38.20911
+_s_dlz_chr~y |  -1.443183   1.902416    -0.76   0.448    -5.173341    2.286975
+~h_Materials |   2.201651   1.142026     1.93   0.054    -.0375738    4.440876
+~s_Materials |  -1.089939   1.347708    -0.81   0.419    -3.732454    1.552577
+~i_Materials |   83.30344   37.30103     2.23   0.026      10.1655    156.4414
+~w_Materials |  -3.408197   1.636726    -2.08   0.037    -6.617404   -.1989903
+_s_~h_Metals |  -.2488568    1.08513    -0.23   0.819    -2.376524     1.87881
+_s_~s_Metals |   1.744243   1.354798     1.29   0.198    -.9121737    4.400661
+_s_~i_Metals |  -7.424013   23.06447    -0.32   0.748    -52.64764    37.79961
+_s_~w_Metals |   1.516949   1.845127     0.82   0.411    -2.100882    5.134779
+_~h_Minerals |  -4.597282   1.890753    -2.43   0.015    -8.304573   -.8899905
+_~s_Minerals |   3.678531   2.230468     1.65   0.099    -.6948548    8.051916
+_~i_Minerals |  -9.805984   46.63255    -0.21   0.833    -101.2407    81.62871
+_~w_Minerals |  -63.90539   38.29517    -1.67   0.095    -138.9926     11.1818
+_s_dlz_usc.. |  -.9518184    1.06375    -0.89   0.371    -3.037564    1.133928
+_s_dlz_chu.. |    .369509   1.052449     0.35   0.726    -1.694079    2.433097
+_s_dlz_usi.. |  -10.86005   40.42298    -0.27   0.788    -90.11934    68.39924
+_s_dlz_chr.. |  -.0347532   1.731577    -0.02   0.984    -3.429939    3.360433
+_s_dlz_usc~t |  -2.960259    2.96583    -1.00   0.318    -8.775506    2.854988
+_s_dlz_chu~t |   .7136309   1.241048     0.58   0.565    -1.719752    3.147013
+_s_dlz_usi~t |  -122.9681   107.7333    -1.14   0.254    -334.2059     88.2697
+_s_dlz_chr~t |   -2.13744    5.16804    -0.41   0.679    -12.27067    7.995786
+         Q1a |   .9231158    .202362     4.56   0.000     .5263349    1.319897
+         Q1b |   .3771054   .3247142     1.16   0.246    -.2595773    1.013788
+         Q1c |   .0003379   .0001476     2.29   0.022     .0000486    .0006272
+         Q2a |   .2052539   .2867382     0.72   0.474    -.3569674    .7674753
+         Q2b |          0  (omitted)
+         Q2c |  -.9456658   .1552286    -6.09   0.000     -1.25003   -.6413016
+         Q3a |          0  (omitted)
+         Q3b |          0  (omitted)
+         Q3c |          0  (omitted)
+         Q3d |   .1487734   .1032479     1.44   0.150    -.0536697    .3512166
+         Q4a |          0  (omitted)
+         Q4b |          0  (omitted)
+         Q4c |          0  (omitted)
+         Q4d |          0  (omitted)
+   _Q1a_usch |  -4.407427   2.225362    -1.98   0.048    -8.770802   -.0440516
+   _Q1b_usch |   4.149132   2.204309     1.88   0.060    -.1729634    8.471227
+   _Q1c_usch |  -.0021658   .0013565    -1.60   0.110    -.0048255    .0004939
+   _Q2a_chus |  -7.362105   4.260037    -1.73   0.084    -15.71496    .9907545
+   _Q2b_chus |   2.878754   2.702631     1.07   0.287    -2.420425    8.177933
+   _Q2c_chus |  -.4802359   1.395898    -0.34   0.731     -3.21724    2.256768
+    _Q3a_usi |   2.287898   5.379141     0.43   0.671    -8.259243    12.83504
+    _Q3b_usi |   3.683203   5.787856     0.64   0.525    -7.665326    15.03173
+    _Q3c_usi |   1.207462   2.863612     0.42   0.673    -4.407361    6.822284
+    _Q3d_usi |  -1.919123   3.227307    -0.59   0.552     -8.24706    4.408815
+   _Q4a_chrw |  -16.55756   12.86469    -1.29   0.198    -41.78199    8.666864
+   _Q4b_chrw |  -4.712135   6.233977    -0.76   0.450    -16.93539    7.511124
+   _Q4c_chrw |   6.541457   3.128931     2.09   0.037     .4064112     12.6765
+   _Q4d_chrw |          0  (omitted)
+  dlv_ch_lag |  -.2708389   .0076305   -35.49   0.000    -.2858004   -.2558773
+     mv_v_ch |   .3135927   .0431738     7.26   0.000     .2289397    .3982457
+       _cons |   .0638176   .0568615     1.12   0.262    -.0476734    .1753087
+------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+          cs |       441           0         441     |
+-----------------------------------------------------+
+********** CSQ ch v_cs **********
+(221,800 real changes made)
+(257,700 real changes made)
+(208,769 real changes made)
+(239,225 real changes made)
+(110,124 real changes made)
+(117,687 real changes made)
+(215,118 real changes made)
+(246,250 real changes made)
+(207,052 real changes made)
+(238,976 real changes made)
+(99,434 real changes made)
+(105,973 real changes made)
+(7,699 real changes made)
+(257,700 real changes made)
+(7,269 real changes made)
+(239,329 real changes made)
+(3,261 real changes made)
+(106,488 real changes made)
+(3,401 real changes made)
+(121,424 real changes made)
+(100,655 real changes made)
+(246,250 real changes made)
+(99,074 real changes made)
+(238,890 real changes made)
+(49,753 real changes made)
+(106,371 real changes made)
+(0 real changes made)
+(0 real changes made)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+
+Duplicates in terms of all variables
+
+(96,350 observations deleted)
+  (0 bytes saved)
+(file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_beta_v_cs_ch_bs42.dta not found)
+file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_beta_v_cs_ch_bs42.dta saved
+(245,615 real changes made)
+(245,615 real changes made)
+(245,615 real changes made)
+(202,469 real changes made)
+(244,171 real changes made)
+(92,566 real changes made)
+  (0 bytes saved)
+(file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_yhat_v_cs_ch_bs42.dta not found)
+file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_yhat_v_cs_ch_bs42.dta saved
+file /tmp/7227594.1.debian.q/St12074.000008 saved as .dta format
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                           260,150  
+    -----------------------------------------
+(26,075 missing values generated)
+       sw_rw: 26075 missing values recoded
+(5,203 missing values generated)
+(5,203 missing values generated)
+(7,800 missing values generated)
+(19,266 missing values generated)
+         Q1c: 5203 missing values recoded
+         Q2c: 5203 missing values recoded
+         Q3d: 7800 missing values recoded
+         Q4d: 19266 missing values recoded
+(file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /regs_v_cs_rw_bs42.dta not found)
+file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /regs_v_cs_rw_bs42.dta saved
+********** P rw v_cs **********
+(MWFE estimator converged in 1 iterations)
+
+HDFE Linear regression                            Number of obs   =    223,724
+Absorbing 1 HDFE group                            F(   6,   3303) =     508.57
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.1072
+                                                  Adj R-squared   =     0.1055
+                                                  Within R-sq.    =     0.0986
+Number of clusters (hs6)     =      3,304         Root MSE        =     1.3655
+
+                                (Std. err. adjusted for 3,304 clusters in hs6)
+------------------------------------------------------------------------------
+             |               Robust
+      dlv_rw | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    dlz_usch |   .1745951   .1228288     1.42   0.155    -.0662331    .4154233
+    dlz_chus |   .3627219   .1080183     3.36   0.001     .1509322    .5745115
+     dlz_usi |  -.1708016   .2340733    -0.73   0.466    -.6297451    .2881419
+    dlz_chrw |  -.0277785   .2429683    -0.11   0.909    -.5041622    .4486051
+  dlv_rw_lag |  -.3296651   .0059976   -54.97   0.000    -.3414245   -.3179058
+     mv_v_rw |   .1051157   .0897066     1.17   0.241    -.0707704    .2810018
+       _cons |  -.0118039    .017076    -0.69   0.489    -.0452845    .0216768
+------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+          cs |       432           0         432     |
+-----------------------------------------------------+
+********** P rw v_cs **********
+********** CSQ rw v_cs **********
+(MWFE estimator converged in 1 iterations)
+note: _c_dlz_usi_CHN omitted because of collinearity
+note: _c_dlz_chrw_CHN omitted because of collinearity
+note: _c_dlz_usi_USA omitted because of collinearity
+note: _c_dlz_chrw_USA omitted because of collinearity
+note: Q2b omitted because of collinearity
+note: Q3a omitted because of collinearity
+note: Q3b omitted because of collinearity
+note: Q4a omitted because of collinearity
+note: Q4b omitted because of collinearity
+note: Q4c omitted because of collinearity
+
+HDFE Linear regression                            Number of obs   =    234,075
+Absorbing 1 HDFE group                            F( 252,   3303) =      18.65
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.1105
+                                                  Adj R-squared   =     0.1078
+                                                  Within R-sq.    =     0.1018
+Number of clusters (hs6)     =      3,304         Root MSE        =     1.3403
+
+                                (Std. err. adjusted for 3,304 clusters in hs6)
+------------------------------------------------------------------------------
+             |               Robust
+      dlv_rw | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    dlz_usch |   .1478676   .3782191     0.39   0.696       -.5937    .8894351
+    dlz_chus |  -.0255366   .2870861    -0.09   0.929    -.5884214    .5373481
+     dlz_usi |   3.881576    3.91385     0.99   0.321    -3.792241    11.55539
+    dlz_chrw |  -.4824617   .5459483    -0.88   0.377    -1.552893    .5879696
+_c_dlz~h_ARG |  -1.607149    .771016    -2.08   0.037    -3.118867   -.0954317
+_c_dlz~s_ARG |  -.1266292   .6992939    -0.18   0.856    -1.497723    1.244464
+_c_dlz~i_ARG |   4.650594   1.605584     2.90   0.004     1.502554    7.798634
+_c_dlz~w_ARG |   1.382281   1.343776     1.03   0.304    -1.252436    4.016999
+_c_dlz~h_AUS |   -1.20818   .5688097    -2.12   0.034    -2.323436   -.0929251
+_c_dlz~s_AUS |   .3075143    .577591     0.53   0.594    -.8249582    1.439987
+_c_dlz~i_AUS |  -2.481489   1.206321    -2.06   0.040    -4.846701   -.1162763
+_c_dlz~w_AUS |  -.8318658   .9409364    -0.88   0.377    -2.676743    1.013012
+_c_dlz~h_AUT |  -.3666154   .4751689    -0.77   0.440    -1.298271    .5650399
+_c_dlz~s_AUT |   .8412102   .4516083     1.86   0.063    -.0442502    1.726671
+_c_dlz~i_AUT |  -.2462844   .6379069    -0.39   0.699    -1.497017    1.004449
+_c_dlz~w_AUT |   .5253762   .7833098     0.67   0.502    -1.010446    2.061198
+_c_dlz~h_BEL |   .0542149   .4571917     0.12   0.906    -.8421928    .9506226
+_c_dlz~s_BEL |   .1097065   .4066546     0.27   0.787     -.687614     .907027
+_c_dlz~i_BEL |   .4641279   .5521013     0.84   0.401    -.6183674    1.546623
+_c_dlz~w_BEL |    .847481   .7639468     1.11   0.267     -.650376    2.345338
+_c_dlz~h_BGD |    .146189   1.317681     0.11   0.912    -2.437365    2.729743
+_c_dlz~s_BGD |   .0559448   1.160091     0.05   0.962    -2.218625    2.330515
+_c_dlz~i_BGD |  -8.909403    4.58073    -1.94   0.052    -17.89076    .0719543
+_c_dlz~w_BGD |   1.633679   2.486422     0.66   0.511    -3.241406    6.508764
+_c_dlz~h_BGR |   1.203234   .8975316     1.34   0.180    -.5565403    2.963009
+_c_dlz~s_BGR |  -.0080217   .7341487    -0.01   0.991    -1.447454    1.431411
+_c_dlz~i_BGR |  -1.326488   1.354824    -0.98   0.328    -3.982867    1.329891
+_c_dlz~w_BGR |   .2644908    1.39556     0.19   0.850    -2.471759     3.00074
+_c_dlz~h_BRA |   -.136542   .6872427    -0.20   0.843    -1.484007    1.210923
+_c_dlz~s_BRA |   .0579108   .6977913     0.08   0.934    -1.310236    1.426058
+_c_dlz~i_BRA |   1.269542    1.19362     1.06   0.288    -1.070768    3.609852
+_c_dlz~w_BRA |  -.2619596    1.24423    -0.21   0.833      -2.7015    2.177581
+_c_dlz~h_CAN |  -.9550163   .6392666    -1.49   0.135    -2.208415    .2983826
+_c_dlz~s_CAN |   .6087694   .7111145     0.86   0.392    -.7855003    2.003039
+_c_dlz~i_CAN |   1.070273   2.105932     0.51   0.611     -3.05879    5.199336
+_c_dlz~w_CAN |   .9301355   1.251012     0.74   0.457    -1.522702    3.382973
+_c_dlz~h_CHE |  -1.052126   .7068605    -1.49   0.137    -2.438055     .333803
+_c_dlz~s_CHE |   .9746557   .6110487     1.60   0.111    -.2234167    2.172728
+_c_dlz~i_CHE |  -1.394903   1.317604    -1.06   0.290    -3.978307    1.188501
+_c_dlz~w_CHE |   .8035055   1.136256     0.71   0.480    -1.424332    3.031343
+_c_dlz~h_CHL |    -.65298   .9860656    -0.66   0.508    -2.586342    1.280382
+_c_dlz~s_CHL |  -.2771024   .8826035    -0.31   0.754    -2.007608    1.453403
+_c_dlz~i_CHL |   .0740053    2.30035     0.03   0.974     -4.43625    4.584261
+_c_dlz~w_CHL |   .0286613   1.792419     0.02   0.987    -3.485702    3.543025
+_c_dlz~h_CHN |  -.1425994   .4190843    -0.34   0.734    -.9642905    .6790918
+_c_dlz~s_CHN |   .5417406   .4095158     1.32   0.186    -.2611898    1.344671
+_c_dlz~i_CHN |          0  (omitted)
+_c_dlz~w_CHN |          0  (omitted)
+_c_dlz~h_COL |  -.8133496   .9568596    -0.85   0.395    -2.689447    1.062748
+_c_dlz~s_COL |  -.7636684    .891552    -0.86   0.392    -2.511719    .9843819
+_c_dlz~i_COL |  -2.150182   1.840687    -1.17   0.243    -5.759184    1.458821
+_c_dlz~w_COL |   .6892545   1.765004     0.39   0.696    -2.771358    4.149867
+_c_dlz~h_CZE |   .9919893   .5195025     1.91   0.056      -.02659    2.010569
+_c_dlz~s_CZE |  -.3797161   .5258122    -0.72   0.470    -1.410667    .6512347
+_c_dlz~i_CZE |  -.6977689   .6133288    -1.14   0.255    -1.900312    .5047742
+_c_dlz~w_CZE |  -.0875268   .9100357    -0.10   0.923    -1.871818    1.696764
+_c_dlz~h_DNK |   .3407419   .5538324     0.62   0.538    -.7451476    1.426631
+_c_dlz~s_DNK |   .1167663   .5132945     0.23   0.820    -.8896412    1.123174
+_c_dlz~i_DNK |   1.477608   1.033683     1.43   0.153    -.5491149    3.504331
+_c_dlz~w_DNK |   .2431859   .8544741     0.28   0.776    -1.432166    1.918538
+_c_dlz_usc~Y |  -.8212136     .92775    -0.89   0.376    -2.640237    .9978095
+_c_dlz_chu~Y |  -.9731589     .74451    -1.31   0.191    -2.432907    .4865887
+_c_dlz_usi~Y |   2.533801   2.050513     1.24   0.217    -1.486603    6.554205
+_c_dlz_chr~Y |  -.9216674   1.594988    -0.58   0.563    -4.048932    2.205597
+_c_dlz~h_ESP |  -.4155914   .3867519    -1.07   0.283    -1.173889    .3427062
+_c_dlz~s_ESP |   .2467687   .3438237     0.72   0.473    -.4273604    .9208977
+_c_dlz~i_ESP |   .0567999   .7379724     0.08   0.939     -1.39013    1.503729
+_c_dlz~w_ESP |  -.4849786   .5946185    -0.82   0.415    -1.650837    .6808795
+_c_dlz~h_FIN |   .4691643   .7826555     0.60   0.549    -1.065375    2.003703
+_c_dlz~s_FIN |   .7501279   .7017843     1.07   0.285    -.6258483    2.126104
+_c_dlz~i_FIN |  -.0973126   1.196642    -0.08   0.935    -2.443547    2.248922
+_c_dlz~w_FIN |   .3953228     1.2632     0.31   0.754     -2.08141    2.872056
+_c_dlz~h_FRA |   .4074321   .3451781     1.18   0.238    -.2693525    1.084217
+_c_dlz~s_FRA |   .1752899   .3192642     0.55   0.583    -.4506858    .8012657
+_c_dlz~i_FRA |  -.3108915    .489641    -0.63   0.526    -1.270922     .649139
+_c_dlz~w_FRA |  -.9313944   .5602448    -1.66   0.097    -2.029857    .1670678
+_c_dlz~h_GBR |  -.0030595   .4084249    -0.01   0.994     -.803851     .797732
+_c_dlz~s_GBR |   .5490221   .3877648     1.42   0.157    -.2112615    1.309306
+_c_dlz~i_GBR |  -.2804681   .5256806    -0.53   0.594    -1.311161    .7502246
+_c_dlz~w_GBR |  -1.208752   .6994903    -1.73   0.084     -2.58023    .1627269
+_c_dlz_usc~C |  -.2245669   .8990587    -0.25   0.803    -1.987336    1.538202
+_c_dlz_chu~C |  -1.023691   .6348785    -1.61   0.107    -2.268486    .2211044
+_c_dlz_usi~C |   2.804977   1.897491     1.48   0.139    -.9153997    6.525353
+_c_dlz_chr~C |   1.941901   1.116448     1.74   0.082    -.2470981    4.130901
+_c_dlz~h_HKG |  -.0644781   .7811683    -0.08   0.934    -1.596101    1.467145
+_c_dlz~s_HKG |  -.4503249   .7418884    -0.61   0.544    -1.904933    1.004283
+_c_dlz~i_HKG |  -1.402267   1.701521    -0.82   0.410     -4.73841    1.933876
+_c_dlz~w_HKG |   2.690667   1.222388     2.20   0.028     .2939531    5.087381
+_c_dlz~h_HUN |   .5894483   .7277365     0.81   0.418    -.8374119    2.016309
+_c_dlz~s_HUN |   .5141178   .7072647     0.73   0.467    -.8726037    1.900839
+_c_dlz~i_HUN |  -3.176649   1.311134    -2.42   0.015    -5.747366   -.6059315
+_c_dlz~w_HUN |   2.101755   1.388799     1.51   0.130    -.6212383    4.824748
+_c_dlz~h_IDN |   .3693965   .9299768     0.40   0.691    -1.453993    2.192786
+_c_dlz~s_IDN |   .6215961   .6622366     0.94   0.348    -.6768395    1.920032
+_c_dlz~i_IDN |   .7017315   1.772164     0.40   0.692    -2.772919    4.176382
+_c_dlz~w_IDN |   1.049623   1.298098     0.81   0.419    -1.495535     3.59478
+_c_dlz~h_IND |   .5053015   .5476328     0.92   0.356    -.5684326    1.579036
+_c_dlz~s_IND |   .1086953   .4840843     0.22   0.822    -.8404402    1.057831
+_c_dlz~i_IND |   .4754149   .8108178     0.59   0.558    -1.114341    2.065171
+_c_dlz~w_IND |   .1807413   .9856051     0.18   0.855    -1.751717      2.1132
+_c_dlz~h_IRL |   .3483716   .8308144     0.42   0.675    -1.280592    1.977335
+_c_dlz~s_IRL |   .4279187   .7043384     0.61   0.544    -.9530652    1.808903
+_c_dlz~i_IRL |   .2881237   1.417212     0.20   0.839    -2.490578    3.066825
+_c_dlz~w_IRL |   .1697045   1.309995     0.13   0.897    -2.398779    2.738188
+_c_dlz~h_ISR |    .367139   .8572818     0.43   0.668    -1.313718    2.047996
+_c_dlz~s_ISR |  -.7866921   .8380361    -0.94   0.348    -2.429815    .8564305
+_c_dlz~i_ISR |   .4484201    2.28163     0.20   0.844    -4.025133    4.921973
+_c_dlz~w_ISR |    2.46744   1.424137     1.73   0.083    -.3248401     5.25972
+_c_dlz~h_ITA |   .0177587   .3863087     0.05   0.963    -.7396699    .7751873
+_c_dlz~s_ITA |  -.4468087   .3451005    -1.29   0.196    -1.123441    .2298237
+_c_dlz~i_ITA |   .4597008   .4171123     1.10   0.270    -.3581239    1.277526
+_c_dlz~w_ITA |  -.5296382   .5917008    -0.90   0.371    -1.689776    .6304993
+_c_dlz~h_JPN |   .2087223   .4708732     0.44   0.658    -.7145105    1.131955
+_c_dlz~s_JPN |   .4813876   .4960778     0.97   0.332    -.4912634    1.454039
+_c_dlz~i_JPN |  -1.066096   .5826026    -1.83   0.067    -2.208395    .0762025
+_c_dlz~w_JPN |   .7594344   .8718931     0.87   0.384    -.9500711     2.46894
+_c_dlz~h_KOR |  -.0998185   .6306591    -0.16   0.874    -1.336341    1.136704
+_c_dlz~s_KOR |   1.038709   .6362779     1.63   0.103    -.2088297    2.286248
+_c_dlz~i_KOR |   .1807731    .904298     0.20   0.842    -1.592268    1.953814
+_c_dlz~w_KOR |   1.051259   .9701698     1.08   0.279    -.8509363    2.953453
+_c_dlz_usc~X |  -.1329958   .6341037    -0.21   0.834    -1.376272     1.11028
+_c_dlz_chu~X |  -.7508314   .6485087    -1.16   0.247    -2.022351    .5206883
+_c_dlz_usi~X |  -.0343745   1.923424    -0.02   0.986    -3.805599     3.73685
+_c_dlz_chr~X |     1.6322   1.076888     1.52   0.130    -.4792356    3.743636
+_c_dlz~h_MYS |   .8830498     .73379     1.20   0.229    -.5556794    2.321779
+_c_dlz~s_MYS |    -.31192   .6346963    -0.49   0.623    -1.556358    .9325179
+_c_dlz~i_MYS |   .2591668   .9109521     0.28   0.776    -1.526921    2.045255
+_c_dlz~w_MYS |   .7728203   1.249612     0.62   0.536    -1.677272    3.222912
+_c_dlz~h_NLD |   .3028741   .4012834     0.75   0.450    -.4839152    1.089663
+_c_dlz~s_NLD |   .3216721     .32448     0.99   0.322    -.3145301    .9578744
+_c_dlz~i_NLD |   .2605915   .5737066     0.45   0.650    -.8642649    1.385448
+_c_dlz~w_NLD |   -.974813   .6273407    -1.55   0.120    -2.204829     .255203
+_c_dlz~h_NZL |   .4823435   .7922727     0.61   0.543    -1.071052    2.035739
+_c_dlz~s_NZL |  -.5585106   .6827795    -0.82   0.413    -1.897224    .7802031
+_c_dlz~i_NZL |  -.5592728   1.762551    -0.32   0.751    -4.015075    2.896529
+_c_dlz~w_NZL |   -1.42027   1.177529    -1.21   0.228     -3.72903    .8884895
+_c_dlz~h_PER |   .1652918   .9173985     0.18   0.857    -1.633435    1.964019
+_c_dlz~s_PER |   .4753177   .8523347     0.56   0.577     -1.19584    2.146476
+_c_dlz~i_PER |  -4.060999   2.291983    -1.77   0.077     -8.55485    .4328509
+_c_dlz~w_PER |   1.937403   1.533863     1.26   0.207    -1.070016    4.944821
+_c_dlz~h_PHL |  -.0811499   .8924267    -0.09   0.928    -1.830915    1.668615
+_c_dlz~s_PHL |    1.53623    .843904     1.82   0.069     -.118398    3.190858
+_c_dlz~i_PHL |   -1.72538    2.86341    -0.60   0.547    -7.339618    3.888857
+_c_dlz~w_PHL |   1.708204   1.547019     1.10   0.270    -1.325009    4.741417
+_c_dlz~h_POL |   .1819729   .5241116     0.35   0.728    -.8456436    1.209589
+_c_dlz~s_POL |   .0955422   .4680649     0.20   0.838    -.8221844    1.013269
+_c_dlz~i_POL |  -.1723336    .722521    -0.24   0.811    -1.588968    1.244301
+_c_dlz~w_POL |   -.613606   .8634981    -0.71   0.477    -2.306652    1.079439
+_c_dlz~h_PRT |   .9315616   .6891958     1.35   0.177    -.4197325    2.282856
+_c_dlz~s_PRT |  -.0661093   .5590163    -0.12   0.906    -1.162163    1.029944
+_c_dlz~i_PRT |   .8288808   1.115824     0.74   0.458    -1.358895    3.016657
+_c_dlz~w_PRT |    .715858   1.016564     0.70   0.481    -1.277301    2.709017
+_c_dlz_usc~U |   1.210417   .7992414     1.51   0.130    -.3566414    2.777476
+_c_dlz_chu~U |   1.310454   .6743012     1.94   0.052    -.0116361    2.632545
+_c_dlz_usi~U |  -.0724089    1.34005    -0.05   0.957    -2.699821    2.555003
+_c_dlz_chr~U |   -.510635   1.270434    -0.40   0.688    -3.001552    1.980282
+_c_dlz~h_SGP |   .1567879   .7114885     0.22   0.826    -1.238215    1.551791
+_c_dlz~s_SGP |   .4658888   .6276536     0.74   0.458    -.7647405    1.696518
+_c_dlz~i_SGP |   .5396302   1.120771     0.48   0.630    -1.657845    2.737106
+_c_dlz~w_SGP |  -1.077658   1.125884    -0.96   0.339     -3.28516    1.129844
+_c_dlz~h_SVK |   .2602414    .773737     0.34   0.737    -1.256811    1.777294
+_c_dlz~s_SVK |   .1227704    .684581     0.18   0.858    -1.219476    1.465016
+_c_dlz~i_SVK |   1.659892    1.25708     1.32   0.187    -.8048425    4.124627
+_c_dlz~w_SVK |  -3.421008   1.437253    -2.38   0.017    -6.239005   -.6030106
+_c_dlz~h_SVN |  -.3506326   .7174599    -0.49   0.625    -1.757344    1.056079
+_c_dlz~s_SVN |  -.1091916   .6766663    -0.16   0.872    -1.435919    1.217536
+_c_dlz~i_SVN |   2.525456   1.253921     2.01   0.044     .0669149    4.983996
+_c_dlz~w_SVN |  -.1020128   1.304414    -0.08   0.938    -2.659554    2.455528
+_c_dlz~h_SWE |   .5936829   .5742769     1.03   0.301    -.5322917    1.719658
+_c_dlz~s_SWE |   .0937208   .6032341     0.16   0.877     -1.08903    1.276471
+_c_dlz~i_SWE |    -.10732   .7505027    -0.14   0.886    -1.578817    1.364177
+_c_dlz~w_SWE |  -.4122433   .8611326    -0.48   0.632    -2.100651    1.276164
+_c_dlz~h_THA |   .3129062   .8650166     0.36   0.718    -1.383117    2.008929
+_c_dlz~s_THA |   1.130197   .7101042     1.59   0.112    -.2620917    2.522486
+_c_dlz~i_THA |   1.633624   1.209157     1.35   0.177     -.737148    4.004397
+_c_dlz~w_THA |   1.856057   1.114933     1.66   0.096    -.3299722    4.042087
+_c_dlz~h_TUR |   .2341613   .6162589     0.38   0.704    -.9741267    1.442449
+_c_dlz~s_TUR |   1.169402   .5551932     2.11   0.035     .0808441    2.257959
+_c_dlz~i_TUR |   2.174235   .6966189     3.12   0.002     .8083864    3.540083
+_c_dlz~w_TUR |   1.264202   .8803072     1.44   0.151     -.461801    2.990205
+_c_dlz~h_TWN |  -.0239142   .5163407    -0.05   0.963    -1.036294    .9884659
+_c_dlz~s_TWN |      .3176   .5205498     0.61   0.542    -.7030328    1.338233
+_c_dlz~i_TWN |  -.1102907   .7639502    -0.14   0.885    -1.608154    1.387573
+_c_dlz~w_TWN |   .5927493   1.014039     0.58   0.559    -1.395458    2.580957
+_c_dlz~h_UKR |  -1.441931   .7435742    -1.94   0.053    -2.899844    .0159818
+_c_dlz~s_UKR |  -.2751932   .6909873    -0.40   0.690        -1.63    1.079614
+_c_dlz~i_UKR |  -1.008536   1.291174    -0.78   0.435    -3.540118    1.523046
+_c_dlz~w_UKR |  -.9534045   1.525472    -0.62   0.532    -3.944371    2.037562
+_c_dlz~h_USA |   .5626416   .3350955     1.68   0.093    -.0943742    1.219657
+_c_dlz~s_USA |   .0143411   .3688583     0.04   0.969    -.7088728    .7375551
+_c_dlz~i_USA |          0  (omitted)
+_c_dlz~w_USA |          0  (omitted)
+_c_dlz_usc~M |   1.317744   .7737294     1.70   0.089    -.1992935    2.834782
+_c_dlz_chu~M |   1.387824   .7564561     1.83   0.067    -.0953462    2.870994
+_c_dlz_usi~M |   -.237954   1.247094    -0.19   0.849     -2.68311    2.207202
+_c_dlz_chr~M |  -.0017724   1.292246    -0.00   0.999    -2.535456    2.531911
+_c_dlz_usc~F |  -.0242113   .4733358    -0.05   0.959    -.9522726    .9038499
+_c_dlz_chu~F |   .3115181    .459807     0.68   0.498    -.5900173    1.213054
+_c_dlz_usi~F |  -.5382683   .6925596    -0.78   0.437    -1.896158    .8196212
+_c_dlz_chr~F |   1.533695   .8608427     1.78   0.075    -.1541445    3.221534
+_s_dlz_usc~l |    -.05621   .4519773    -0.12   0.901     -.942394     .829974
+_s_dlz_chu~l |   .2502706   .2976978     0.84   0.401    -.3334203    .8339615
+_s_dlz_usi~l |  -3.375941   4.881557    -0.69   0.489    -12.94712    6.195243
+_s_dlz_chr~l |  -1.831652   .6256042    -2.93   0.003    -3.058263   -.6050404
+~h_Chemicals |  -.3215464    .506458    -0.63   0.526     -1.31455    .6714569
+~s_Chemicals |   .5261882   .3747232     1.40   0.160    -.2085251    1.260902
+~i_Chemicals |  -3.180838   11.09719    -0.29   0.774    -24.93891    18.57723
+~w_Chemicals |   5.491223   2.378735     2.31   0.021     .8272791    10.15517
+_s_dlz_usc~y |   .1272189   .4167838     0.31   0.760    -.6899618    .9443996
+_s_dlz_chu~y |   .2533136   .4380371     0.58   0.563    -.6055381    1.112165
+_s_dlz_usi~y |  -4.984293   3.883668    -1.28   0.199    -12.59893    2.630347
+_s_dlz_chr~y |   .7331064   .9726271     0.75   0.451    -1.173906    2.640119
+~h_Materials |   .5037549   .4696822     1.07   0.284    -.4171428    1.424653
+~s_Materials |  -.4216518   .3818611    -1.10   0.270     -1.17036    .3270566
+~i_Materials |   23.70904   19.39171     1.22   0.222    -14.31194    61.73003
+~w_Materials |   2.609628    .960287     2.72   0.007     .7268106    4.492446
+_s_~h_Metals |  -1.062988   .4154839    -2.56   0.011     -1.87762   -.2483562
+_s_~s_Metals |  -.1490894   .4516538    -0.33   0.741    -1.034639    .7364603
+_s_~i_Metals |   -3.40819   3.890297    -0.88   0.381    -11.03583    4.219447
+_s_~w_Metals |   2.134183   .8519843     2.50   0.012     .4637123    3.804654
+_~h_Minerals |  -.0484716   .9939419    -0.05   0.961    -1.997276    1.900333
+_~s_Minerals |  -.4111856   .7582097    -0.54   0.588    -1.897794    1.075423
+_~i_Minerals |   26668.07   354173.5     0.08   0.940    -667753.7    721089.8
+_~w_Minerals |   15.65773   9.780001     1.60   0.109    -3.517747    34.83321
+_s_dlz_usc.. |   .0158575   .4019226     0.04   0.969    -.7721851    .8039002
+_s_dlz_chu.. |  -.1768533   .3738816    -0.47   0.636    -.9099163    .5562097
+_s_dlz_usi.. |   8.497549   9.605044     0.88   0.376    -10.33489    27.32999
+_s_dlz_chr.. |   .5954583   .6028887     0.99   0.323    -.5866149    1.777532
+_s_dlz_usc~t |   .7075288    .698857     1.01   0.311    -.6627079    2.077765
+_s_dlz_chu~t |   .7030267   .5367148     1.31   0.190    -.3493006    1.755354
+_s_dlz_usi~t |  -73.90845   67.33832    -1.10   0.272    -205.9375    58.12061
+_s_dlz_chr~t |  -2.649882    1.66046    -1.60   0.111    -5.905518    .6057537
+         Q1a |   .2257077   .0994243     2.27   0.023     .0307682    .4206472
+         Q1b |   .2477089   .3737454     0.66   0.508     -.485087    .9805049
+         Q1c |  -.2106219   .0682101    -3.09   0.002    -.3443603   -.0768836
+         Q2a |   .1192714   .1258632     0.95   0.343    -.1275063    .3660491
+         Q2b |          0  (omitted)
+         Q2c |   -.149563   .1668794    -0.90   0.370    -.4767606    .1776345
+         Q3a |          0  (omitted)
+         Q3b |          0  (omitted)
+         Q3c |  -1.024651    .372608    -2.75   0.006    -1.755218   -.2940854
+         Q3d |   .1474825   .0578974     2.55   0.011     .0339641    .2610009
+         Q4a |          0  (omitted)
+         Q4b |          0  (omitted)
+         Q4c |          0  (omitted)
+         Q4d |    .142056   .0432383     3.29   0.001     .0572795    .2268326
+   _Q1a_usch |   .3511619   1.104115     0.32   0.750    -1.813657     2.51598
+   _Q1b_usch |   1.126896   1.047921     1.08   0.282    -.9277445    3.181537
+   _Q1c_usch |   1.532236   1.381566     1.11   0.267    -1.176576    4.241049
+   _Q2a_chus |   .0037684   .8363612     0.00   0.996     -1.63607    1.643607
+   _Q2b_chus |   1.068686    .674238     1.59   0.113    -.2532807    2.390653
+   _Q2c_chus |   .6700301   .9041965     0.74   0.459    -1.102812    2.442872
+    _Q3a_usi |   -2.20099   3.707743    -0.59   0.553    -9.470698    5.068717
+    _Q3b_usi |   21.63793   11.73749     1.84   0.065    -1.375566    44.65142
+    _Q3c_usi |  -23.16671   11.04533    -2.10   0.036    -44.82309   -1.510328
+    _Q3d_usi |  -.0652168   2.080814    -0.03   0.975    -4.145033      4.0146
+   _Q4a_chrw |   1.173337   4.710498     0.25   0.803    -8.062454    10.40913
+   _Q4b_chrw |  -6.774851   10.01265    -0.68   0.499    -26.40649    12.85679
+   _Q4c_chrw |   16.35782   10.24546     1.60   0.110    -3.730269     36.4459
+   _Q4d_chrw |  -2.210414   1.252255    -1.77   0.078    -4.665688    .2448609
+  dlv_rw_lag |  -.3272084   .0059375   -55.11   0.000      -.33885   -.3155669
+     mv_v_rw |   .1216994   .0885838     1.37   0.170    -.0519853    .2953841
+       _cons |  -.0317664   .0236756    -1.34   0.180    -.0781868     .014654
+------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+          cs |       450           0         450     |
+-----------------------------------------------------+
+********** CSQ rw v_cs **********
+(220,650 real changes made)
+(257,500 real changes made)
+(208,533 real changes made)
+(240,193 real changes made)
+(113,964 real changes made)
+(123,370 real changes made)
+(214,862 real changes made)
+(245,800 real changes made)
+(208,511 real changes made)
+(240,290 real changes made)
+(101,154 real changes made)
+(108,536 real changes made)
+(9,569 real changes made)
+(257,500 real changes made)
+(9,105 real changes made)
+(240,266 real changes made)
+(9,082 real changes made)
+(239,456 real changes made)
+(4,555 real changes made)
+(123,193 real changes made)
+(101,279 real changes made)
+(245,800 real changes made)
+(100,476 real changes made)
+(240,213 real changes made)
+(100,274 real changes made)
+(239,453 real changes made)
+(51,229 real changes made)
+(108,501 real changes made)
+
+Duplicates in terms of all variables
+
+(94,950 observations deleted)
+  (0 bytes saved)
+(file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_beta_v_cs_rw_bs42.dta not found)
+file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_beta_v_cs_rw_bs42.dta saved
+(250,542 real changes made)
+(250,542 real changes made)
+(250,542 real changes made)
+(207,076 real changes made)
+(248,908 real changes made)
+(234,057 real changes made)
+  (0 bytes saved)
+(file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_yhat_v_cs_rw_bs42.dta not found)
+file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_yhat_v_cs_rw_bs42.dta saved
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                                50  
+    -----------------------------------------
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                                50  
+    -----------------------------------------
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                                50  
+    -----------------------------------------
+  (0 bytes saved)
+(file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_yhat_v_cs_bs42.dta not found)
+file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_yhat_v_cs_bs42.dta saved
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                       120,750
+        from master                    60,350  
+        from using                     60,400  
+
+    Matched                           103,400  
+    -----------------------------------------
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                       103,250
+        from master                    81,100  
+        from using                     22,150  
+
+    Matched                           143,050  
+    -----------------------------------------
+  (0 bytes saved)
+(file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_beta_v_cs_bs42.dta not found)
+file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_beta_v_cs_bs42.dta saved
+file /tmp/7227594.1.debian.q/St12074.00000b saved as .dta format
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                           260,150  
+    -----------------------------------------
+(152,582 missing values generated)
+       sw_us: 152582 missing values recoded
+(8,143 missing values generated)
+(8,143 missing values generated)
+(8,143 missing values generated)
+(8,143 missing values generated)
+(8,143 missing values generated)
+(17,306 missing values generated)
+         Q1c: 8143 missing values recoded
+         Q2c: 8143 missing values recoded
+         Q3c: 8143 missing values recoded
+         Q3d: 8143 missing values recoded
+         Q4c: 8143 missing values recoded
+         Q4d: 17306 missing values recoded
+(file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /regs_v_nofe_us_bs42.dta not found)
+file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /regs_v_nofe_us_bs42.dta saved
+********** P us v_nofe **********
+(MWFE estimator converged in 1 iterations)
+
+HDFE Linear regression                            Number of obs   =    103,117
+Absorbing 1 HDFE group                            F(   6,   3203) =     234.08
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.0548
+                                                  Adj R-squared   =     0.0548
+                                                  Within R-sq.    =     0.0548
+Number of clusters (hs6)     =      3,204         Root MSE        =     1.2576
+
+                                (Std. err. adjusted for 3,204 clusters in hs6)
+------------------------------------------------------------------------------
+             |               Robust
+      dlv_us | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    dlz_usch |   .3488482   .1424846     2.45   0.014     .0694779    .6282185
+    dlz_chus |  -.1235362   .1581454    -0.78   0.435    -.4336126    .1865403
+     dlz_usi |  -1.999089   .3301947    -6.05   0.000    -2.646503   -1.351675
+    dlz_chrw |   .1840353   .2761549     0.67   0.505     -.357423    .7254936
+  dlv_us_lag |  -.2372179   .0067764   -35.01   0.000    -.2505044   -.2239315
+     mv_v_us |   .2787874   .0276147    10.10   0.000     .2246431    .3329317
+       _cons |   .1005302   .0225479     4.46   0.000     .0563204      .14474
+------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+        nofe |         1           0           1     |
+-----------------------------------------------------+
+********** P us v_nofe **********
+********** CSQ us v_nofe **********
+(MWFE estimator converged in 1 iterations)
+note: _c_dlz_usi_CHN omitted because of collinearity
+note: _c_dlz_chrw_CHN omitted because of collinearity
+note: _c_dlz_usch_USA omitted because of collinearity
+note: _c_dlz_chus_USA omitted because of collinearity
+note: _c_dlz_usi_USA omitted because of collinearity
+note: _c_dlz_chrw_USA omitted because of collinearity
+note: _s_dlz_usi_Minerals omitted because of collinearity
+note: Q2b omitted because of collinearity
+note: Q3a omitted because of collinearity
+note: Q3b omitted because of collinearity
+note: Q3c omitted because of collinearity
+note: Q3d omitted because of collinearity
+note: Q4a omitted because of collinearity
+note: Q4b omitted because of collinearity
+note: Q4c omitted because of collinearity
+note: _Q3d_usi omitted because of collinearity
+
+HDFE Linear regression                            Number of obs   =    107,568
+Absorbing 1 HDFE group                            F( 246,   3213) =     434.49
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.0734
+                                                  Adj R-squared   =     0.0713
+                                                  Within R-sq.    =     0.0734
+Number of clusters (hs6)     =      3,214         Root MSE        =     1.2344
+
+                                (Std. err. adjusted for 3,214 clusters in hs6)
+------------------------------------------------------------------------------
+             |               Robust
+      dlv_us | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    dlz_usch |  -.5407379   .6258896    -0.86   0.388    -1.767921    .6864455
+    dlz_chus |    .139334   .4610558     0.30   0.763    -.7646594    1.043327
+     dlz_usi |  -2.644419   6.551277    -0.40   0.686    -15.48952    10.20069
+    dlz_chrw |   .6848871   1.096795     0.62   0.532    -1.465601    2.835375
+_c_dlz~h_ARG |   1.475198   1.003047     1.47   0.141    -.4914788    3.441875
+_c_dlz~s_ARG |  -1.813062   .9212639    -1.97   0.049    -3.619386   -.0067373
+_c_dlz~i_ARG |   2.613022   3.282827     0.80   0.426    -3.823626     9.04967
+_c_dlz~w_ARG |   1.260855   2.747091     0.46   0.646    -4.125374    6.647084
+_c_dlz~h_AUS |  -.3666459   .7195103    -0.51   0.610    -1.777392      1.0441
+_c_dlz~s_AUS |   1.125087   .6836776     1.65   0.100    -.2154015    2.465576
+_c_dlz~i_AUS |  -6.987651   3.610016    -1.94   0.053    -14.06582    .0905162
+_c_dlz~w_AUS |   .9365913   1.844756     0.51   0.612    -2.680427    4.553609
+_c_dlz~h_AUT |   .7429145   .8392338     0.89   0.376    -.9025733    2.388402
+_c_dlz~s_AUT |  -.0279262   .9948804    -0.03   0.978    -1.978591    1.922738
+_c_dlz~i_AUT |      1.974   1.175366     1.68   0.093     -.330543    4.278543
+_c_dlz~w_AUT |   3.030698   2.237828     1.35   0.176    -1.357017    7.418414
+_c_dlz~h_BEL |  -.9581702   .7411603    -1.29   0.196    -2.411365    .4950247
+_c_dlz~s_BEL |   .7458647   .7736953     0.96   0.335    -.7711217    2.262851
+_c_dlz~i_BEL |   2.321851   1.419642     1.64   0.102    -.4616449    5.105346
+_c_dlz~w_BEL |   .5676475   2.131464     0.27   0.790    -3.611519    4.746814
+_c_dlz~h_BGD |   3.981621   1.662584     2.39   0.017     .7217877    7.241454
+_c_dlz~s_BGD |  -.6251925   1.078309    -0.58   0.562    -2.739436    1.489051
+_c_dlz~i_BGD |   11.11505   4.235298     2.62   0.009      2.81089    19.41921
+_c_dlz~w_BGD |  -2.739021   2.442247    -1.12   0.262     -7.52754    2.049499
+_c_dlz~h_BGR |   1.076542   1.013403     1.06   0.288    -.9104404    3.063524
+_c_dlz~s_BGR |   .8187471   .9522585     0.86   0.390    -1.048349    2.685843
+_c_dlz~i_BGR |   11.52222   5.412473     2.13   0.033      .909969    22.13447
+_c_dlz~w_BGR |  -.4420403   2.061955    -0.21   0.830    -4.484922    3.600841
+_c_dlz~h_BRA |   -.557022   .6866877    -0.81   0.417    -1.903412    .7893683
+_c_dlz~s_BRA |   .5104465   .6390395     0.80   0.424    -.7425199    1.763413
+_c_dlz~i_BRA |  -.9877447   1.883458    -0.52   0.600    -4.680646    2.705156
+_c_dlz~w_BRA |   .4060284   1.670826     0.24   0.808    -2.869964    3.682021
+_c_dlz~h_CAN |  -.0117904   .5052833    -0.02   0.981    -1.002501    .9789199
+_c_dlz~s_CAN |  -.1301839   .4924267    -0.26   0.792    -1.095686    .8353184
+_c_dlz~i_CAN |   2.688123   1.423235     1.89   0.059    -.1024184    5.478664
+_c_dlz~w_CAN |   -.178972   1.232382    -0.15   0.885    -2.595307    2.237363
+_c_dlz~h_CHE |  -.5379509   .6950445    -0.77   0.439    -1.900726    .8248246
+_c_dlz~s_CHE |  -.7839263   .7182797    -1.09   0.275    -2.192259    .6244065
+_c_dlz~i_CHE |   3.842798   2.058002     1.87   0.062    -.1923314    7.877928
+_c_dlz~w_CHE |   .3497454   1.762074     0.20   0.843    -3.105158    3.804648
+_c_dlz~h_CHL |   1.871133   1.059183     1.77   0.077    -.2056095    3.947875
+_c_dlz~s_CHL |  -1.504906   .7588629    -1.98   0.047    -2.992811   -.0170021
+_c_dlz~i_CHL |  -11.40124   10.04636    -1.13   0.257    -31.09916    8.296675
+_c_dlz~w_CHL |   .5202935   2.287481     0.23   0.820    -3.964776    5.005363
+_c_dlz~h_CHN |  -1.228706   .5059552    -2.43   0.015    -2.220734   -.2366785
+_c_dlz~s_CHN |  -.0769318   .5032574    -0.15   0.879     -1.06367    .9098064
+_c_dlz~i_CHN |          0  (omitted)
+_c_dlz~w_CHN |          0  (omitted)
+_c_dlz~h_COL |  -.4681228   .9954227    -0.47   0.638    -2.419851    1.483605
+_c_dlz~s_COL |   .9008005   .8032935     1.12   0.262    -.6742192     2.47582
+_c_dlz~i_COL |  -.5196324   2.189676    -0.24   0.812    -4.812936    3.773671
+_c_dlz~w_COL |  -1.038675   1.924458    -0.54   0.589    -4.811966    2.734616
+_c_dlz~h_CZE |   1.191817    .728726     1.64   0.102    -.2369978    2.620632
+_c_dlz~s_CZE |  -.8197931   .7552001    -1.09   0.278    -2.300516    .6609297
+_c_dlz~i_CZE |    4.72217   2.268575     2.08   0.037      .274169    9.170171
+_c_dlz~w_CZE |   .2792278   1.932677     0.14   0.885    -3.510176    4.068632
+_c_dlz~h_DNK |   .6319373   .7642419     0.83   0.408    -.8665137    2.130388
+_c_dlz~s_DNK |  -.9592091   .7780949    -1.23   0.218    -2.484822    .5664037
+_c_dlz~i_DNK |   1.604959   2.095227     0.77   0.444    -2.503158    5.713077
+_c_dlz~w_DNK |    -2.2924   2.129066    -1.08   0.282    -6.466866    1.882065
+_c_dlz_usc~Y |  -.5949968   1.212258    -0.49   0.624    -2.971874    1.781881
+_c_dlz_chu~Y |   .3631275   1.273076     0.29   0.775    -2.132996    2.859251
+_c_dlz_usi~Y |   4.821768   3.755438     1.28   0.199    -2.541529    12.18507
+_c_dlz_chr~Y |  -3.593831    2.46028    -1.46   0.144    -8.417709    1.230047
+_c_dlz~h_ESP |   .3492222   .6988479     0.50   0.617    -1.021011    1.719455
+_c_dlz~s_ESP |   .4402694   .6911965     0.64   0.524    -.9149614      1.7955
+_c_dlz~i_ESP |  -1.229949   1.613973    -0.76   0.446     -4.39447    1.934573
+_c_dlz~w_ESP |  -1.667718   1.492588    -1.12   0.264    -4.594239    1.258804
+_c_dlz~h_FIN |   1.088203   .8329155     1.31   0.191    -.5448965    2.721303
+_c_dlz~s_FIN |  -1.230609   .8855878    -1.39   0.165    -2.966983    .5057657
+_c_dlz~i_FIN |    1.08122    1.68741     0.64   0.522    -2.227288    4.389729
+_c_dlz~w_FIN |  -1.105863   2.616986    -0.42   0.673    -6.236994    4.025268
+_c_dlz~h_FRA |  -.5674857   .5209447    -1.09   0.276    -1.588903     .453932
+_c_dlz~s_FRA |    .011871   .5350054     0.02   0.982    -1.037115    1.060857
+_c_dlz~i_FRA |   1.278451   1.079968     1.18   0.237    -.8390446    3.395946
+_c_dlz~w_FRA |   .3310025   1.296154     0.26   0.798    -2.210371    2.872376
+_c_dlz~h_GBR |  -.8776873   .5615831    -1.56   0.118    -1.978785    .2234101
+_c_dlz~s_GBR |    .406445   .5896232     0.69   0.491    -.7496307    1.562521
+_c_dlz~i_GBR |  -.0550924     1.1826    -0.05   0.963     -2.37382    2.263635
+_c_dlz~w_GBR |    .125639   1.352091     0.09   0.926    -2.525408    2.776686
+_c_dlz_usc~C |  -.0420937   1.204515    -0.03   0.972     -2.40379    2.319603
+_c_dlz_chu~C |    -.12359   1.042651    -0.12   0.906    -2.167918    1.920738
+_c_dlz_usi~C |   11.59144   6.710795     1.73   0.084    -1.566432    24.74931
+_c_dlz_chr~C |  -2.481209   2.110219    -1.18   0.240     -6.61872    1.656302
+_c_dlz~h_HKG |  -2.993371    .824695    -3.63   0.000    -4.610352   -1.376389
+_c_dlz~s_HKG |  -1.585214   .8112904    -1.95   0.051    -3.175913    .0054855
+_c_dlz~i_HKG |   2.193433   2.710146     0.81   0.418    -3.120358    7.507223
+_c_dlz~w_HKG |    .862715   1.773697     0.49   0.627    -2.614978    4.340408
+_c_dlz~h_HUN |  -.5982695   1.030223    -0.58   0.561     -2.61823    1.421691
+_c_dlz~s_HUN |   1.767614   1.128628     1.57   0.117    -.4452907    3.980518
+_c_dlz~i_HUN |   5.018449   2.350071     2.14   0.033     .4106591    9.626239
+_c_dlz~w_HUN |   1.096022    2.34094     0.47   0.640    -3.493864    5.685909
+_c_dlz~h_IDN |     .18918   .8530999     0.22   0.825    -1.483495    1.861855
+_c_dlz~s_IDN |     .24136   .7822021     0.31   0.758    -1.292306    1.775026
+_c_dlz~i_IDN |   2.584265   1.728356     1.50   0.135    -.8045264    5.973057
+_c_dlz~w_IDN |   .3903606   1.686722     0.23   0.817      -2.9168    3.697521
+_c_dlz~h_IND |   1.605412   .6496442     2.47   0.014     .3316534    2.879172
+_c_dlz~s_IND |   .2157797   .5999436     0.36   0.719    -.9605313    1.392091
+_c_dlz~i_IND |   1.430239    1.27879     1.12   0.263    -1.077089    3.937566
+_c_dlz~w_IND |  -.3868812   1.516668    -0.26   0.799    -3.360616    2.586854
+_c_dlz~h_IRL |   .9071936   .9100082     1.00   0.319    -.8770619    2.691449
+_c_dlz~s_IRL |  -1.669868   .9565977    -1.75   0.081    -3.545472    .2057354
+_c_dlz~i_IRL |   1.332153   2.361674     0.56   0.573    -3.298388    5.962694
+_c_dlz~w_IRL |  -2.711933   2.344314    -1.16   0.247    -7.308435     1.88457
+_c_dlz~h_ISR |  -1.055232   .7557867    -1.40   0.163    -2.537105    .4266406
+_c_dlz~s_ISR |   .3233293   .7451761     0.43   0.664    -1.137739    1.784398
+_c_dlz~i_ISR |   4.604097   3.454842     1.33   0.183    -2.169821    11.37802
+_c_dlz~w_ISR |  -1.057181   1.740637    -0.61   0.544    -4.470051     2.35569
+_c_dlz~h_ITA |   .4054723   .4976922     0.81   0.415    -.5703541    1.381299
+_c_dlz~s_ITA |   .2068683   .4892582     0.42   0.672    -.7524216    1.166158
+_c_dlz~i_ITA |  -.1195658   1.234036    -0.10   0.923    -2.539143    2.300012
+_c_dlz~w_ITA |  -.0771251   1.160165    -0.07   0.947    -2.351864    2.197614
+_c_dlz~h_JPN |  -.0291778   .5296576    -0.06   0.956    -1.067679    1.009323
+_c_dlz~s_JPN |   -.723868   .5734496    -1.26   0.207    -1.848232    .4004961
+_c_dlz~i_JPN |    .525942   .8850753     0.59   0.552    -1.209427    2.261311
+_c_dlz~w_JPN |  -2.152871   1.294298    -1.66   0.096    -4.690604    .3848621
+_c_dlz~h_KOR |   .6067279   .5816214     1.04   0.297    -.5336586    1.747114
+_c_dlz~s_KOR |  -.5506843   .5878484    -0.94   0.349     -1.70328    .6019117
+_c_dlz~i_KOR |  -2.871766   2.009705    -1.43   0.153    -6.812201    1.068668
+_c_dlz~w_KOR |  -1.354429   1.491969    -0.91   0.364    -4.279738    1.570879
+_c_dlz_usc~X |   .0041758   .5488576     0.01   0.994    -1.071971    1.080322
+_c_dlz_chu~X |   .3374389   .5041968     0.67   0.503    -.6511412    1.326019
+_c_dlz_usi~X |   6.531457   1.876907     3.48   0.001     2.851402    10.21151
+_c_dlz_chr~X |  -.3699008   1.316346    -0.28   0.779    -2.950863    2.211062
+_c_dlz~h_MYS |   1.889307   .9353373     2.02   0.043      .055389    3.723226
+_c_dlz~s_MYS |  -.1277829   .9578448    -0.13   0.894    -2.005832    1.750266
+_c_dlz~i_MYS |   1.443392   1.749366     0.83   0.409    -1.986595    4.873379
+_c_dlz~w_MYS |   4.253864   2.366911     1.80   0.072    -.3869448    8.894673
+_c_dlz~h_NLD |   .4329639    .646002     0.67   0.503    -.8336539    1.699582
+_c_dlz~s_NLD |  -.4571784   .6889881    -0.66   0.507    -1.808079    .8937223
+_c_dlz~i_NLD |   1.981041    1.46173     1.36   0.175    -.8849776     4.84706
+_c_dlz~w_NLD |  -1.406913   1.668906    -0.84   0.399    -4.679141    1.865315
+_c_dlz~h_NZL |  -.8980289   .8584571    -1.05   0.296    -2.581208    .7851502
+_c_dlz~s_NZL |   .3300057   .7999454     0.41   0.680    -1.238449    1.898461
+_c_dlz~i_NZL |   .1011851   2.905732     0.03   0.972    -5.596091    5.798462
+_c_dlz~w_NZL |  -2.462552   2.717204    -0.91   0.365    -7.790181    2.865077
+_c_dlz~h_PER |  -1.475349   1.088405    -1.36   0.175    -3.609388    .6586903
+_c_dlz~s_PER |   .4880283   .7792884     0.63   0.531    -1.039925    2.015981
+_c_dlz~i_PER |   4.963687   4.973388     1.00   0.318    -4.787648    14.71502
+_c_dlz~w_PER |  -1.630891   1.943117    -0.84   0.401    -5.440765    2.178983
+_c_dlz~h_PHL |   .1927629    .917924     0.21   0.834    -1.607013    1.992539
+_c_dlz~s_PHL |   -1.25578   .8147428    -1.54   0.123    -2.853248    .3416888
+_c_dlz~i_PHL |    5.40858   3.087928     1.75   0.080    -.6459278    11.46309
+_c_dlz~w_PHL |  -1.406447   1.756859    -0.80   0.423    -4.851126    2.038232
+_c_dlz~h_POL |   1.360271   .7618116     1.79   0.074    -.1334149    2.853957
+_c_dlz~s_POL |   .1972115   .7646667     0.26   0.796    -1.302072    1.696495
+_c_dlz~i_POL |   1.425586   2.475882     0.58   0.565    -3.428882    6.280055
+_c_dlz~w_POL |   .3256823   1.635899     0.20   0.842    -2.881829    3.533193
+_c_dlz~h_PRT |   2.575945   .8527705     3.02   0.003     .9039155    4.247974
+_c_dlz~s_PRT |  -.9953422   .8000057    -1.24   0.214    -2.563915     .573231
+_c_dlz~i_PRT |  -5.795925    2.87258    -2.02   0.044     -11.4282    -.163649
+_c_dlz~w_PRT |  -4.293216     1.7002    -2.53   0.012    -7.626804   -.9596292
+_c_dlz_usc~U |   1.993874   1.166046     1.71   0.087    -.2923952    4.280142
+_c_dlz_chu~U |    .131735    1.08761     0.12   0.904    -2.000745    2.264215
+_c_dlz_usi~U |     1.0496    2.76138     0.38   0.704    -4.364645    6.463844
+_c_dlz_chr~U |   .9008529   2.286826     0.39   0.694    -3.582933    5.384639
+_c_dlz~h_SGP |    .261327   .9266675     0.28   0.778    -1.555592    2.078246
+_c_dlz~s_SGP |  -.7729752   .9823788    -0.79   0.431    -2.699128    1.153177
+_c_dlz~i_SGP |  -1.013124   2.001325    -0.51   0.613    -4.937127    2.910879
+_c_dlz~w_SGP |   -.822927   3.043903    -0.27   0.787    -6.791115    5.145261
+_c_dlz~h_SVK |   2.363526   1.054742     2.24   0.025     .2954916    4.431561
+_c_dlz~s_SVK |    -1.0198   1.114645    -0.91   0.360    -3.205288    1.165688
+_c_dlz~i_SVK |   .6370359   1.758706     0.36   0.717    -2.811264    4.085336
+_c_dlz~w_SVK |   -.402403   2.750671    -0.15   0.884     -5.79565    4.990844
+_c_dlz~h_SVN |   .2354552   1.046436     0.23   0.822    -1.816294    2.287205
+_c_dlz~s_SVN |   .7791668   1.118904     0.70   0.486    -1.414672    2.973006
+_c_dlz~i_SVN |   4.424001   2.563984     1.73   0.085    -.6032091    9.451211
+_c_dlz~w_SVN |   -1.61709   2.828333    -0.57   0.568     -7.16261     3.92843
+_c_dlz~h_SWE |   -.129129   .6859541    -0.19   0.851    -1.474081    1.215823
+_c_dlz~s_SWE |  -.6388868   .7140214    -0.89   0.371     -2.03887    .7610968
+_c_dlz~i_SWE |   3.304301   1.006376     3.28   0.001     1.331097    5.277506
+_c_dlz~w_SWE |  -1.288022   1.869132    -0.69   0.491    -4.952834    2.376791
+_c_dlz~h_THA |   .8252456   .6976614     1.18   0.237    -.5426609    2.193152
+_c_dlz~s_THA |  -.2214216   .6545452    -0.34   0.735     -1.50479    1.061947
+_c_dlz~i_THA |   4.590903   3.137893     1.46   0.144    -1.561572    10.74338
+_c_dlz~w_THA |   1.106645   1.645474     0.67   0.501     -2.11964     4.33293
+_c_dlz~h_TUR |   .3987345    .707246     0.56   0.573    -.9879646    1.785434
+_c_dlz~s_TUR |   1.641127   .7032249     2.33   0.020     .2623125    3.019942
+_c_dlz~i_TUR |  -3.428005   1.602217    -2.14   0.032    -6.569476   -.2865345
+_c_dlz~w_TUR |  -.4110403   1.637093    -0.25   0.802    -3.620893    2.798812
+_c_dlz~h_TWN |   .5328525   .6508173     0.82   0.413    -.7432066    1.808912
+_c_dlz~s_TWN |  -.7081875   .6779289    -1.04   0.296    -2.037405    .6210295
+_c_dlz~i_TWN |   .7798226    1.11945     0.70   0.486    -1.415086    2.974731
+_c_dlz~w_TWN |   .9824761   1.618179     0.61   0.544    -2.190291    4.155243
+_c_dlz~h_UKR |   .8910501   1.309711     0.68   0.496    -1.676904    3.459004
+_c_dlz~s_UKR |   1.770202   1.078323     1.64   0.101    -.3440692    3.884472
+_c_dlz~i_UKR |   3.018292   2.282741     1.32   0.186    -1.457485    7.494069
+_c_dlz~w_UKR |  -.3143227   2.328962    -0.13   0.893    -4.880725     4.25208
+_c_dlz~h_USA |          0  (omitted)
+_c_dlz~s_USA |          0  (omitted)
+_c_dlz~i_USA |          0  (omitted)
+_c_dlz~w_USA |          0  (omitted)
+_c_dlz_usc~M |   2.439285   .8902128     2.74   0.006     .6938425    4.184728
+_c_dlz_chu~M |   1.443166   .7310847     1.97   0.048      .009726    2.876605
+_c_dlz_usi~M |    1.71566   1.247527     1.38   0.169    -.7303691    4.161689
+_c_dlz_chr~M |  -1.006332   1.609497    -0.63   0.532    -4.162078    2.149413
+_c_dlz_usc~F |  -.9326786   .8746918    -1.07   0.286    -2.647689    .7823319
+_c_dlz_chu~F |   .4756356   .7916099     0.60   0.548    -1.076476    2.027747
+_c_dlz_usi~F |  -.4169921   1.862813    -0.22   0.823    -4.069414    3.235429
+_c_dlz_chr~F |   -1.55749   2.059159    -0.76   0.449    -5.594888    2.479908
+_s_dlz_usc~l |  -.5465791   .5989203    -0.91   0.362    -1.720884    .6277254
+_s_dlz_chu~l |  -.6119012   .3982569    -1.54   0.125    -1.392765    .1689622
+_s_dlz_usi~l |    11.1212   7.549484     1.47   0.141    -3.681092    25.92349
+_s_dlz_chr~l |    -1.0807   .7768951    -1.39   0.164    -2.603961    .4425598
+~h_Chemicals |    .516959   .6058292     0.85   0.394    -.6708918     1.70481
+~s_Chemicals |  -.1878875   .4246802    -0.44   0.658    -1.020559    .6447841
+~i_Chemicals |   59.19472   16.46058     3.60   0.000     26.92041    91.46903
+~w_Chemicals |  -.0940367   3.437188    -0.03   0.978    -6.833339    6.645266
+_s_dlz_usc~y |   .3495286   .5061168     0.69   0.490    -.6428159    1.341873
+_s_dlz_chu~y |   .2885832   .3584446     0.81   0.421      -.41422    .9913864
+_s_dlz_usi~y |  -1.224247   6.671617    -0.18   0.854     -14.3053    11.85681
+_s_dlz_chr~y |   .5298868   1.181808     0.45   0.654    -1.787288    2.847061
+~h_Materials |   .8978355    .508311     1.77   0.077    -.0988112    1.894482
+~s_Materials |  -.2889031   .3341655    -0.86   0.387    -.9441022     .366296
+~i_Materials |   13.92336   33.35793     0.42   0.676    -51.48162    79.32834
+~w_Materials |   .5134253   .7400958     0.69   0.488    -.9376826    1.964533
+_s_~h_Metals |   .8392257   .5747056     1.46   0.144     -.287601    1.966052
+_s_~s_Metals |  -.7310927   .4503299    -1.62   0.105    -1.614056    .1518703
+_s_~i_Metals |  -1.844626   6.490623    -0.28   0.776    -14.57081    10.88156
+_s_~w_Metals |   .4027502   .9699719     0.42   0.678    -1.499076    2.304577
+_~h_Minerals |  -1.229398   1.284597    -0.96   0.339     -3.74811    1.289314
+_~s_Minerals |   .8314331   .7478403     1.11   0.266    -.6348594    2.297726
+_~i_Minerals |          0  (omitted)
+_~w_Minerals |  -15.09303   11.34732    -1.33   0.184    -37.34174    7.155676
+_s_dlz_usc.. |    .670138   .5642457     1.19   0.235      -.43618    1.776456
+_s_dlz_chu.. |  -.2839331   .4147912    -0.68   0.494    -1.097215    .5293491
+_s_dlz_usi.. |   55.21678   27.81106     1.99   0.047     .6875591     109.746
+_s_dlz_chr.. |   .8925586    .892413     1.00   0.317     -.857198    2.642315
+_s_dlz_usc~t |   1.360627   .6990988     1.95   0.052    -.0100978    2.731352
+_s_dlz_chu~t |  -1.630494   .6024218    -2.71   0.007    -2.811664   -.4493237
+_s_dlz_usi~t |   200.2452   112.5699     1.78   0.075    -20.47099    420.9614
+_s_dlz_chr~t |    .083955   1.970656     0.04   0.966    -3.779914    3.947825
+         Q1a |  -.1716869   .1165586    -1.47   0.141    -.4002237    .0568498
+         Q1b |   .5480381   .1892427     2.90   0.004     .1769896    .9190867
+         Q1c |   -.560762   .1026895    -5.46   0.000    -.7621057   -.3594184
+         Q2a |  -.0235366   .1694748    -0.14   0.890    -.3558263    .3087532
+         Q2b |          0  (omitted)
+         Q2c |   .0003943   .0025907     0.15   0.879    -.0046853     .005474
+         Q3a |          0  (omitted)
+         Q3b |          0  (omitted)
+         Q3c |          0  (omitted)
+         Q3d |          0  (omitted)
+         Q4a |          0  (omitted)
+         Q4b |          0  (omitted)
+         Q4c |          0  (omitted)
+         Q4d |  -.1455635   .0639529    -2.28   0.023    -.2709561    -.020171
+   _Q1a_usch |    .475355   1.285639     0.37   0.712    -2.045401    2.996111
+   _Q1b_usch |   .4991373   1.828976     0.27   0.785    -3.086941    4.085216
+   _Q1c_usch |  -1.660776   1.121953    -1.48   0.139    -3.860593    .5390405
+   _Q2a_chus |  -1.023572   1.365275    -0.75   0.453     -3.70047    1.653325
+   _Q2b_chus |   1.226364   .9580205     1.28   0.201    -.6520288    3.104758
+   _Q2c_chus |   .0015517   .0092857     0.17   0.867    -.0166548    .0197583
+    _Q3a_usi |   15.24493   4.563768     3.34   0.001      6.29674    24.19312
+    _Q3b_usi |   7.439111   4.724907     1.57   0.115    -1.825027    16.70325
+    _Q3c_usi |  -3.525733   2.296471    -1.54   0.125    -8.028429    .9769629
+    _Q3d_usi |          0  (omitted)
+   _Q4a_chrw |  -14.89028   11.69818    -1.27   0.203    -37.82693    8.046371
+   _Q4b_chrw |   2.889183   4.931407     0.59   0.558    -6.779839     12.5582
+   _Q4c_chrw |   1.445795   2.195068     0.66   0.510    -2.858081    5.749671
+   _Q4d_chrw |  -.8968716    1.99379    -0.45   0.653    -4.806101    3.012357
+  dlv_us_lag |  -.2389508   .0066653   -35.85   0.000    -.2520194   -.2258821
+     mv_v_us |   .2453001   .0281654     8.71   0.000      .190076    .3005241
+       _cons |   .1564906   .0326326     4.80   0.000     .0925077    .2204734
+------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+        nofe |         1           0           1     |
+-----------------------------------------------------+
+********** CSQ us v_nofe **********
+(220,650 real changes made)
+(257,150 real changes made)
+(208,990 real changes made)
+(240,673 real changes made)
+(114,024 real changes made)
+(123,204 real changes made)
+(217,897 real changes made)
+(247,800 real changes made)
+(210,135 real changes made)
+(240,661 real changes made)
+(95,336 real changes made)
+(103,132 real changes made)
+(10,261 real changes made)
+(257,150 real changes made)
+(9,704 real changes made)
+(240,498 real changes made)
+(4,521 real changes made)
+(123,191 real changes made)
+(0 real changes made)
+(0 real changes made)
+(99,205 real changes made)
+(247,800 real changes made)
+(97,652 real changes made)
+(240,205 real changes made)
+(58,558 real changes made)
+(123,202 real changes made)
+(49,749 real changes made)
+(108,298 real changes made)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+
+Duplicates in terms of all variables
+
+(96,050 observations deleted)
+  (0 bytes saved)
+(file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_beta_v_nofe_us_bs42.dta not found)
+file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_beta_v_nofe_us_bs42.dta saved
+(245,710 real changes made)
+(245,710 real changes made)
+(245,710 real changes made)
+(204,884 real changes made)
+(244,549 real changes made)
+(107,553 real changes made)
+  (0 bytes saved)
+(file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_yhat_v_nofe_us_bs42.dta not found)
+file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_yhat_v_nofe_us_bs42.dta saved
+file /tmp/7227594.1.debian.q/St12074.00000e saved as .dta format
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                           260,150  
+    -----------------------------------------
+(165,600 missing values generated)
+       sw_ch: 165600 missing values recoded
+(18,629 missing values generated)
+(18,629 missing values generated)
+(18,629 missing values generated)
+(8,192 missing values generated)
+(18,629 missing values generated)
+(18,629 missing values generated)
+         Q1c: 18629 missing values recoded
+         Q2c: 18629 missing values recoded
+         Q3c: 18629 missing values recoded
+         Q3d: 8192 missing values recoded
+         Q4c: 18629 missing values recoded
+         Q4d: 18629 missing values recoded
+(file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /regs_v_nofe_ch_bs42.dta not found)
+file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /regs_v_nofe_ch_bs42.dta saved
+********** P ch v_nofe **********
+(MWFE estimator converged in 1 iterations)
+
+HDFE Linear regression                            Number of obs   =     90,313
+Absorbing 1 HDFE group                            F(   6,   3029) =     244.35
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.0656
+                                                  Adj R-squared   =     0.0655
+                                                  Within R-sq.    =     0.0656
+Number of clusters (hs6)     =      3,030         Root MSE        =     1.7748
+
+                                (Std. err. adjusted for 3,030 clusters in hs6)
+------------------------------------------------------------------------------
+             |               Robust
+      dlv_ch | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    dlz_usch |  -1.167653   .2372923    -4.92   0.000    -1.632923   -.7023826
+    dlz_chus |   .0842567    .242405     0.35   0.728    -.3910384    .5595517
+     dlz_usi |  -.2542485    .291315    -0.87   0.383    -.8254437    .3169467
+    dlz_chrw |  -.8271746   .4916425    -1.68   0.093    -1.791161    .1368122
+  dlv_ch_lag |  -.2699743    .007456   -36.21   0.000    -.2845936   -.2553551
+     mv_v_ch |   .4185957   .0447511     9.35   0.000     .3308501    .5063413
+       _cons |   .2123195   .0349965     6.07   0.000     .1437002    .2809389
+------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+        nofe |         1           0           1     |
+-----------------------------------------------------+
+********** P ch v_nofe **********
+********** CSQ ch v_nofe **********
+(MWFE estimator converged in 1 iterations)
+warning: missing F statistic; dropped variables due to collinearity or too few 
+> clusters
+note: _c_dlz_usch_CHN omitted because of collinearity
+note: _c_dlz_chus_CHN omitted because of collinearity
+note: _c_dlz_usi_CHN omitted because of collinearity
+note: _c_dlz_chrw_CHN omitted because of collinearity
+note: _c_dlz_usi_USA omitted because of collinearity
+note: _c_dlz_chrw_USA omitted because of collinearity
+note: Q2b omitted because of collinearity
+note: Q3a omitted because of collinearity
+note: Q3b omitted because of collinearity
+note: Q3c omitted because of collinearity
+note: Q4a omitted because of collinearity
+note: Q4b omitted because of collinearity
+note: Q4c omitted because of collinearity
+note: Q4d omitted because of collinearity
+note: _Q4d_chrw omitted because of collinearity
+
+HDFE Linear regression                            Number of obs   =     94,550
+Absorbing 1 HDFE group                            F( 247,   3058) =          .
+Statistics robust to heteroskedasticity           Prob > F        =          .
+                                                  R-squared       =     0.0863
+                                                  Adj R-squared   =     0.0840
+                                                  Within R-sq.    =     0.0863
+Number of clusters (hs6)     =      3,059         Root MSE        =     1.7391
+
+                                (Std. err. adjusted for 3,059 clusters in hs6)
+------------------------------------------------------------------------------
+             |               Robust
+      dlv_ch | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    dlz_usch |   -.811244   1.061971    -0.76   0.445    -2.893492    1.271004
+    dlz_chus |   .3603446   .7113712     0.51   0.613    -1.034469    1.755159
+     dlz_usi |   16.17482   21.15343     0.76   0.445    -25.30155    57.65119
+    dlz_chrw |  -.9976782    1.47695    -0.68   0.499    -3.893593    1.898236
+_c_dlz~h_ARG |   2.709133   2.128217     1.27   0.203    -1.463746    6.882013
+_c_dlz~s_ARG |  -1.698471    1.89276    -0.90   0.370    -5.409681    2.012739
+_c_dlz~i_ARG |  -1.530109   3.338684    -0.46   0.647      -8.0764    5.016182
+_c_dlz~w_ARG |   13.80637   12.32144     1.12   0.263    -10.35277    37.96551
+_c_dlz~h_AUS |  -1.545391   .9948571    -1.55   0.120    -3.496047     .405265
+_c_dlz~s_AUS |    1.94295   .9708115     2.00   0.045     .0394414    3.846459
+_c_dlz~i_AUS |  -3.519154   2.786072    -1.26   0.207    -8.981916    1.943608
+_c_dlz~w_AUS |  -2.217802    2.38666    -0.93   0.353    -6.897421    2.461817
+_c_dlz~h_AUT |  -.9175162   1.099275    -0.83   0.404    -3.072909    1.237877
+_c_dlz~s_AUT |   1.320933   1.081572     1.22   0.222    -.7997485    3.441614
+_c_dlz~i_AUT |   -.010085   1.738089    -0.01   0.995    -3.418025    3.397855
+_c_dlz~w_AUT |  -.5442702   2.611703    -0.21   0.835    -5.665141    4.576601
+_c_dlz~h_BEL |  -1.138443   .9231323    -1.23   0.218    -2.948466    .6715792
+_c_dlz~s_BEL |  -.5861004   .9729387    -0.60   0.547     -2.49378    1.321579
+_c_dlz~i_BEL |   1.375134   1.946993     0.71   0.480    -2.442414    5.192681
+_c_dlz~w_BEL |  -1.420582   2.644418    -0.54   0.591    -6.605599    3.764435
+_c_dlz~h_BGD |  -3.050482   5.015758    -0.61   0.543    -12.88508    6.784116
+_c_dlz~s_BGD |   1.372372   3.559436     0.39   0.700    -5.606756      8.3515
+_c_dlz~i_BGD |   22.67288   11.21587     2.02   0.043     .6814774    44.66428
+_c_dlz~w_BGD |   4.936288   6.612502     0.75   0.455     -8.02911    17.90169
+_c_dlz~h_BGR |   1.486463    1.64963     0.90   0.368    -1.748032    4.720958
+_c_dlz~s_BGR |   1.032198   1.483407     0.70   0.487    -1.876378    3.940773
+_c_dlz~i_BGR |   2.664799    7.45443     0.36   0.721     -11.9514      17.281
+_c_dlz~w_BGR |   2.823998   3.589958     0.79   0.432    -4.214976    9.862973
+_c_dlz~h_BRA |  -1.551832   1.280907    -1.21   0.226    -4.063359    .9596939
+_c_dlz~s_BRA |   .9201448   1.138507     0.81   0.419    -1.312172    3.152461
+_c_dlz~i_BRA |   2.128124   2.654989     0.80   0.423    -3.077618    7.333867
+_c_dlz~w_BRA |  -3.290745   2.980162    -1.10   0.270    -9.134068    2.552578
+_c_dlz~h_CAN |  -1.614572   .9141197    -1.77   0.077    -3.406923    .1777788
+_c_dlz~s_CAN |   1.525345   .8702517     1.75   0.080    -.1809927    3.231682
+_c_dlz~i_CAN |  -1.241574   2.628742    -0.47   0.637    -6.395853    3.912704
+_c_dlz~w_CAN |  -2.868414   2.525861    -1.14   0.256     -7.82097    2.084143
+_c_dlz~h_CHE |   1.182145    .903337     1.31   0.191    -.5890642    2.953354
+_c_dlz~s_CHE |  -1.084526   1.010531    -1.07   0.283    -3.065915    .8968632
+_c_dlz~i_CHE |  -2.771423   2.077373    -1.33   0.182    -6.844612    1.301766
+_c_dlz~w_CHE |   2.959131   2.531392     1.17   0.243     -2.00427    7.922533
+_c_dlz~h_CHL |  -4.193776   2.088508    -2.01   0.045    -8.288798   -.0987536
+_c_dlz~s_CHL |   2.546693   1.223589     2.08   0.037     .1475533    4.945832
+_c_dlz~i_CHL |  -.9415427   2.799929    -0.34   0.737    -6.431476     4.54839
+_c_dlz~w_CHL |   1.654915   3.921552     0.42   0.673    -6.034229    9.344058
+_c_dlz~h_CHN |          0  (omitted)
+_c_dlz~s_CHN |          0  (omitted)
+_c_dlz~i_CHN |          0  (omitted)
+_c_dlz~w_CHN |          0  (omitted)
+_c_dlz~h_COL |   3.185847   3.416271     0.93   0.351    -3.512572    9.884266
+_c_dlz~s_COL |  -3.578306   3.057245    -1.17   0.242    -9.572768    2.416156
+_c_dlz~i_COL |   58.98351   5.581692    10.57   0.000     48.03926    69.92775
+_c_dlz~w_COL |  -28.02495   7.438356    -3.77   0.000    -42.60963   -13.44026
+_c_dlz~h_CZE |   1.636186   1.059167     1.54   0.123    -.4405651    3.712937
+_c_dlz~s_CZE |   1.015997   1.086214     0.94   0.350    -1.113787    3.145781
+_c_dlz~i_CZE |   -5.70326   2.003783    -2.85   0.004    -9.632158   -1.774362
+_c_dlz~w_CZE |   8.859051   2.752752     3.22   0.001      3.46162    14.25648
+_c_dlz~h_DNK |  -2.097675   .9905677    -2.12   0.034    -4.039921   -.1554293
+_c_dlz~s_DNK |   1.785663   1.033828     1.73   0.084    -.2414037    3.812731
+_c_dlz~i_DNK |  -5.538995   2.867791    -1.93   0.054    -11.16199    .0839981
+_c_dlz~w_DNK |    1.74126   2.723885     0.64   0.523    -3.599569     7.08209
+_c_dlz_usc~Y |   -5.48653    2.69648    -2.03   0.042    -10.77363   -.1994333
+_c_dlz_chu~Y |   3.892468   1.847973     2.11   0.035     .2690733    7.515864
+_c_dlz_usi~Y |  -11.72859   2.434873    -4.82   0.000    -16.50274   -6.954438
+_c_dlz_chr~Y |   9.366953   3.838058     2.44   0.015     1.841519    16.89239
+_c_dlz~h_ESP |  -1.086172   .8713078    -1.25   0.213     -2.79458    .6222363
+_c_dlz~s_ESP |   1.166626   .7969236     1.46   0.143    -.3959341    2.729186
+_c_dlz~i_ESP |   .2593336    1.97567     0.13   0.896    -3.614441    4.133109
+_c_dlz~w_ESP |   2.790604   1.827471     1.53   0.127    -.7925925    6.373801
+_c_dlz~h_FIN |   .3463777   1.225785     0.28   0.778    -2.057068    2.749823
+_c_dlz~s_FIN |  -.1938242    1.33836    -0.14   0.885    -2.818001    2.430352
+_c_dlz~i_FIN |  -1.578419    2.05734    -0.77   0.443    -5.612328    2.455489
+_c_dlz~w_FIN |   5.839375   3.325465     1.76   0.079    -.6809965    12.35975
+_c_dlz~h_FRA |  -.5254974   .7388976    -0.71   0.477    -1.974284    .9232887
+_c_dlz~s_FRA |    -.35577   .7618842    -0.47   0.641    -1.849627    1.138087
+_c_dlz~i_FRA |  -1.910253   1.620763    -1.18   0.239    -5.088148    1.267642
+_c_dlz~w_FRA |  -.9955004   1.721649    -0.58   0.563    -4.371206    2.380205
+_c_dlz~h_GBR |  -.9320816   .7635536    -1.22   0.222    -2.429212    .5650485
+_c_dlz~s_GBR |   1.259084   .8307727     1.52   0.130    -.3698452    2.888013
+_c_dlz~i_GBR |  -3.239114    1.52948    -2.12   0.034    -6.238027   -.2402005
+_c_dlz~w_GBR |  -3.087921   2.022639    -1.53   0.127     -7.05379    .8779476
+_c_dlz_usc~C |    4.42313   1.813807     2.44   0.015     .8667261    7.979535
+_c_dlz_chu~C |   .1692703   1.443356     0.12   0.907    -2.660775    2.999316
+_c_dlz_usi~C |   -26.8363    14.9916    -1.79   0.074    -56.23093    2.558322
+_c_dlz_chr~C |   6.206098   3.819949     1.62   0.104    -1.283828    13.69602
+_c_dlz~h_HKG |  -4.459047   1.089043    -4.09   0.000    -6.594377   -2.323716
+_c_dlz~s_HKG |   2.728552   1.199128     2.28   0.023     .3773736    5.079729
+_c_dlz~i_HKG |  -1.427302   3.558712    -0.40   0.688    -8.405011    5.550408
+_c_dlz~w_HKG |   2.722845   2.617577     1.04   0.298    -2.409542    7.855233
+_c_dlz~h_HUN |   1.049444   1.226345     0.86   0.392    -1.355101    3.453989
+_c_dlz~s_HUN |  -.8600979   1.235377    -0.70   0.486    -3.282352    1.562156
+_c_dlz~i_HUN |  -2.570228    3.38107    -0.76   0.447    -9.199627    4.059172
+_c_dlz~w_HUN |   4.165329   3.189349     1.31   0.192    -2.088154    10.41881
+_c_dlz~h_IDN |   1.865099   1.228972     1.52   0.129    -.5445962    4.274794
+_c_dlz~s_IDN |  -.2662716   1.128643    -0.24   0.814    -2.479248    1.946705
+_c_dlz~i_IDN |  -4.027552   3.602814    -1.12   0.264    -11.09173     3.03663
+_c_dlz~w_IDN |   2.639751   2.548714     1.04   0.300    -2.357614    7.637117
+_c_dlz~h_IND |   .5159254   .8528613     0.60   0.545    -1.156314    2.188165
+_c_dlz~s_IND |   1.050284   .8604558     1.22   0.222    -.6368456    2.737415
+_c_dlz~i_IND |  -6.037132   3.022991    -2.00   0.046    -11.96443   -.1098327
+_c_dlz~w_IND |   1.934049   2.167376     0.89   0.372    -2.315611    6.183709
+_c_dlz~h_IRL |  -.1495997   1.318798    -0.11   0.910     -2.73542     2.43622
+_c_dlz~s_IRL |    1.02495   1.326134     0.77   0.440    -1.575253    3.625153
+_c_dlz~i_IRL |   2.072024   4.249604     0.49   0.626    -6.260344    10.40439
+_c_dlz~w_IRL |   2.055817   5.474229     0.38   0.707    -8.677722    12.78936
+_c_dlz~h_ISR |  -1.854361   1.300583    -1.43   0.154    -4.404467    .6957445
+_c_dlz~s_ISR |   1.604799   1.362071     1.18   0.239    -1.065869    4.275467
+_c_dlz~i_ISR |  -6.671906   4.214616    -1.58   0.114    -14.93567     1.59186
+_c_dlz~w_ISR |   .1134135   4.150289     0.03   0.978    -8.024224    8.251051
+_c_dlz~h_ITA |   .2518492   .6596183     0.38   0.703    -1.041491    1.545189
+_c_dlz~s_ITA |   .9691659     .67993     1.43   0.154    -.3640001    2.302332
+_c_dlz~i_ITA |  -.7663845   1.633703    -0.47   0.639    -3.969652    2.436883
+_c_dlz~w_ITA |   1.130255     1.4938     0.76   0.449    -1.798699    4.059209
+_c_dlz~h_JPN |   .3412914   .5759667     0.59   0.554    -.7880296    1.470612
+_c_dlz~s_JPN |   .4406189   .6319857     0.70   0.486    -.7985408    1.679779
+_c_dlz~i_JPN |  -1.534303   .9990386    -1.54   0.125    -3.493157    .4245524
+_c_dlz~w_JPN |  -3.324585   1.683181    -1.98   0.048    -6.624866   -.0243042
+_c_dlz~h_KOR |  -.6417568   .7277191    -0.88   0.378    -2.068625    .7851111
+_c_dlz~s_KOR |   .3224444   .7557909     0.43   0.670    -1.159465    1.804354
+_c_dlz~i_KOR |  -2.082195   1.582469    -1.32   0.188    -5.185005    1.020616
+_c_dlz~w_KOR |   6.429809   1.660881     3.87   0.000     3.173253    9.686365
+_c_dlz_usc~X |   .1150152   .9728324     0.12   0.906    -1.792456    2.022487
+_c_dlz_chu~X |   .9099687   1.003776     0.91   0.365    -1.058175    2.878112
+_c_dlz_usi~X |  -5.069354   3.033191    -1.67   0.095    -11.01665    .8779445
+_c_dlz_chr~X |   2.575042   2.539191     1.01   0.311    -2.403652    7.553736
+_c_dlz~h_MYS |   1.995641   1.170249     1.71   0.088    -.2989124    4.290195
+_c_dlz~s_MYS |   .2443831   1.173593     0.21   0.835    -2.056728    2.545494
+_c_dlz~i_MYS |  -4.285323   2.102527    -2.04   0.042    -8.407831   -.1628145
+_c_dlz~w_MYS |   2.927855   3.561257     0.82   0.411    -4.054845    9.910554
+_c_dlz~h_NLD |  -.7848622   .8431681    -0.93   0.352    -2.438096    .8683713
+_c_dlz~s_NLD |  -.1762076   .8515556    -0.21   0.836    -1.845887    1.493471
+_c_dlz~i_NLD |   -2.06866   2.232527    -0.93   0.354    -6.446066    2.308746
+_c_dlz~w_NLD |  -1.455884   2.377751    -0.61   0.540    -6.118035    3.206267
+_c_dlz~h_NZL |  -.7511165   1.527419    -0.49   0.623    -3.745989    2.243756
+_c_dlz~s_NZL |   .8399299   1.406636     0.60   0.550    -1.918117    3.597977
+_c_dlz~i_NZL |  -5.390013   4.075688    -1.32   0.186    -13.38138    2.601352
+_c_dlz~w_NZL |  -1.648934   3.471567    -0.47   0.635    -8.455774    5.157905
+_c_dlz~h_PER |   1.705986   2.988376     0.57   0.568    -4.153443    7.565415
+_c_dlz~s_PER |   .7204514   1.840227     0.39   0.695    -2.887754    4.328657
+_c_dlz~i_PER |  -.5373871   1.677281    -0.32   0.749    -3.826099    2.751325
+_c_dlz~w_PER |   .3493217   5.542222     0.06   0.950    -10.51754    11.21618
+_c_dlz~h_PHL |   1.099394   1.391067     0.79   0.429    -1.628126    3.826915
+_c_dlz~s_PHL |   .1077657   1.414877     0.08   0.939     -2.66644    2.881972
+_c_dlz~i_PHL |  -5.661469   4.775308    -1.19   0.236    -15.02461    3.701669
+_c_dlz~w_PHL |  -.5778325   2.908549    -0.20   0.843     -6.28074    5.125075
+_c_dlz~h_POL |    .890749   1.091279     0.82   0.414    -1.248966    3.030464
+_c_dlz~s_POL |   2.006878   1.091676     1.84   0.066    -.1336136    4.147371
+_c_dlz~i_POL |   .2625965    2.36193     0.11   0.911    -4.368535    4.893728
+_c_dlz~w_POL |   1.230733   2.566601     0.48   0.632    -3.801705     6.26317
+_c_dlz~h_PRT |   1.853267   1.184638     1.56   0.118    -.4694992    4.176033
+_c_dlz~s_PRT |  -.2748957   1.135278    -0.24   0.809    -2.500881     1.95109
+_c_dlz~i_PRT |  -5.474247   4.001438    -1.37   0.171    -13.32003    2.371532
+_c_dlz~w_PRT |    2.65582   2.670463     0.99   0.320    -2.580263    7.891903
+_c_dlz_usc~U |   2.591615   1.539602     1.68   0.092    -.4271447    5.610375
+_c_dlz_chu~U |   .2508489   1.464996     0.17   0.864    -2.621628    3.123326
+_c_dlz_usi~U |  -4.147033   3.449507    -1.20   0.229    -10.91062    2.616553
+_c_dlz_chr~U |   3.840066   3.258226     1.18   0.239    -2.548467     10.2286
+_c_dlz~h_SGP |  -2.550704   1.069777    -2.38   0.017    -4.648259   -.4531497
+_c_dlz~s_SGP |   1.185009   1.123586     1.05   0.292    -1.018052    3.388069
+_c_dlz~i_SGP |   3.911355   2.536701     1.54   0.123    -1.062456    8.885167
+_c_dlz~w_SGP |   6.266863   3.353893     1.87   0.062    -.3092498    12.84298
+_c_dlz~h_SVK |   1.337511   1.361086     0.98   0.326    -1.331224    4.006247
+_c_dlz~s_SVK |   3.204188    1.55146     2.07   0.039     .1621784    6.246198
+_c_dlz~i_SVK |  -.9114441   3.218473    -0.28   0.777    -7.222033    5.399145
+_c_dlz~w_SVK |   7.911647   3.795374     2.08   0.037     .4699064    15.35339
+_c_dlz~h_SVN |   1.040599   1.390758     0.75   0.454    -1.686315    3.767513
+_c_dlz~s_SVN |   .3616881   1.398953     0.26   0.796    -2.381295    3.104671
+_c_dlz~i_SVN |  -4.671582   3.030822    -1.54   0.123    -10.61424    1.271072
+_c_dlz~w_SVN |   5.103766   3.864333     1.32   0.187    -2.473187    12.68072
+_c_dlz~h_SWE |  -1.709614    .998022    -1.71   0.087    -3.666476    .2472473
+_c_dlz~s_SWE |   .6744178   1.098597     0.61   0.539    -1.479645     2.82848
+_c_dlz~i_SWE |    .056146   1.502275     0.04   0.970    -2.889424    3.001716
+_c_dlz~w_SWE |   .9905718   2.779539     0.36   0.722    -4.459382    6.440525
+_c_dlz~h_THA |  -.9822444    .956236    -1.03   0.304    -2.857175    .8926858
+_c_dlz~s_THA |   1.235614   .8431861     1.47   0.143    -.4176544    2.888883
+_c_dlz~i_THA |  -1.329004   2.162108    -0.61   0.539    -5.568335    2.910327
+_c_dlz~w_THA |   2.505603   2.256114     1.11   0.267     -1.91805    6.929256
+_c_dlz~h_TUR |    2.12158   1.120868     1.89   0.058    -.0761508    4.319311
+_c_dlz~s_TUR |  -.2735419    1.13182    -0.24   0.809    -2.492747    1.945663
+_c_dlz~i_TUR |   -2.04073   2.148719    -0.95   0.342    -6.253809    2.172349
+_c_dlz~w_TUR |   3.654064   2.222658     1.64   0.100    -.7039898    8.012118
+_c_dlz~h_TWN |  -.9800686   .6760552    -1.45   0.147    -2.305637    .3454999
+_c_dlz~s_TWN |   .3038284    .699863     0.43   0.664    -1.068421    1.676078
+_c_dlz~i_TWN |  -1.435075   1.046792    -1.37   0.170    -3.487563    .6174126
+_c_dlz~w_TWN |   4.462292   1.889165     2.36   0.018     .7581302    8.166454
+_c_dlz~h_UKR |   2.136591   2.478554     0.86   0.389     -2.72321    6.996391
+_c_dlz~s_UKR |   3.140722   2.045733     1.54   0.125    -.8704279    7.151871
+_c_dlz~i_UKR |  -3.612555   3.323208    -1.09   0.277     -10.1285    2.903392
+_c_dlz~w_UKR |   4.244498   4.231667     1.00   0.316    -4.052701     12.5417
+_c_dlz~h_USA |   .0871446   .5890047     0.15   0.882    -1.067741     1.24203
+_c_dlz~s_USA |   -1.03193   .5807997    -1.78   0.076    -2.170727    .1068672
+_c_dlz~i_USA |          0  (omitted)
+_c_dlz~w_USA |          0  (omitted)
+_c_dlz_usc~M |   2.543871   1.251549     2.03   0.042      .089909    4.997833
+_c_dlz_chu~M |   2.724843   1.126866     2.42   0.016     .5153514    4.934334
+_c_dlz_usi~M |  -12.34535   3.767892    -3.28   0.001     -19.7332   -4.957489
+_c_dlz_chr~M |  -3.475102   2.893672    -1.20   0.230     -9.14884    2.198636
+_c_dlz_usc~F |   .8682487   1.438666     0.60   0.546    -1.952602      3.6891
+_c_dlz_chu~F |  -1.298105   1.346422    -0.96   0.335    -3.938089    1.341878
+_c_dlz_usi~F |   .4814073   2.577085     0.19   0.852    -4.571587    5.534402
+_c_dlz_chr~F |   12.22856    4.83673     2.53   0.012     2.744993    21.71213
+_s_dlz_usc~l |  -1.393996   1.111287    -1.25   0.210    -3.572941    .7849501
+_s_dlz_chu~l |  -.7078298     .75838    -0.93   0.351    -2.194816    .7791562
+_s_dlz_usi~l |  -17.63653   37.83483    -0.47   0.641     -91.8208    56.54774
+_s_dlz_chr~l |  -1.491761   1.420957    -1.05   0.294    -4.277888    1.294367
+~h_Chemicals |   .0390866   1.081122     0.04   0.971    -2.080713    2.158886
+~s_Chemicals |   .2041898   .7210421     0.28   0.777    -1.209586    1.617966
+~i_Chemicals |   86.73081    44.1927     1.96   0.050     .0804148    173.3812
+~w_Chemicals |  -10.87527   6.236555    -1.74   0.081    -23.10354    1.352989
+_s_dlz_usc~y |   .7413938   .9876776     0.75   0.453    -1.195185    2.677973
+_s_dlz_chu~y |  -1.598711   .6565845    -2.43   0.015    -2.886103   -.3113197
+_s_dlz_usi~y |  -15.63568   21.12304    -0.74   0.459    -57.05247     25.7811
+_s_dlz_chr~y |  -2.667982    1.81162    -1.47   0.141    -6.220098    .8841345
+~h_Materials |   2.241061    1.07705     2.08   0.038     .1292466    4.352875
+~s_Materials |  -2.450305   .8667307    -2.83   0.005    -4.149739   -.7508715
+~i_Materials |   73.61661   35.39046     2.08   0.038     4.225108    143.0081
+~w_Materials |  -1.905663   1.823635    -1.04   0.296    -5.481336    1.670011
+_s_~h_Metals |   .0580253   1.026942     0.06   0.955    -1.955542    2.071592
+_s_~s_Metals |  -.4195006    .674291    -0.62   0.534     -1.74161    .9026087
+_s_~i_Metals |  -15.40008   21.11417    -0.73   0.466    -56.79947    25.99931
+_s_~w_Metals |   .0016083   1.889632     0.00   0.999    -3.703469    3.706686
+_~h_Minerals |   .7480042   2.039777     0.37   0.714    -3.251468    4.747477
+_~s_Minerals |    1.38786   1.428004     0.97   0.331    -1.412085    4.187806
+_~i_Minerals |  -40.08071   26.84881    -1.49   0.136    -92.72425    12.56283
+_~w_Minerals |  -13.16876   35.96465    -0.37   0.714    -83.68609    57.34857
+_s_dlz_usc.. |   .3901452   1.091364     0.36   0.721    -1.749735    2.530026
+_s_dlz_chu.. |  -.9778552    .732124    -1.34   0.182     -2.41336    .4576497
+_s_dlz_usi.. |   24.10263   33.34155     0.72   0.470    -41.27149    89.47675
+_s_dlz_chr.. |   .4359402   1.470992     0.30   0.767    -2.448294    3.320174
+_s_dlz_usc~t |   1.449816   1.130022     1.28   0.200    -.7658637    3.665495
+_s_dlz_chu~t |  -3.762581   .9979404    -3.77   0.000    -5.719283   -1.805879
+_s_dlz_usi~t |  -114.4016   116.4801    -0.98   0.326    -342.7888    113.9857
+_s_dlz_chr~t |   1.227562   2.694914     0.46   0.649    -4.056464    6.511588
+         Q1a |   .7061925   .2296598     3.07   0.002     .2558893    1.156496
+         Q1b |    1.33221   .4524588     2.94   0.003     .4450563    2.219365
+         Q1c |   .0003207   .0001651     1.94   0.052    -3.03e-06    .0006444
+         Q2a |  -.0383828   .2345705    -0.16   0.870    -.4983145     .421549
+         Q2b |          0  (omitted)
+         Q2c |   -1.11299   .1864961    -5.97   0.000    -1.478661   -.7473198
+         Q3a |          0  (omitted)
+         Q3b |          0  (omitted)
+         Q3c |          0  (omitted)
+         Q3d |   .0464432   .1053634     0.44   0.659    -.1601469    .2530334
+         Q4a |          0  (omitted)
+         Q4b |          0  (omitted)
+         Q4c |          0  (omitted)
+         Q4d |          0  (omitted)
+   _Q1a_usch |  -2.606325   2.523601    -1.03   0.302     -7.55445    2.341801
+   _Q1b_usch |  -1.854939   2.241125    -0.83   0.408    -6.249203    2.539324
+   _Q1c_usch |  -.0020156   .0015239    -1.32   0.186    -.0050036    .0009723
+   _Q2a_chus |  -3.474147   2.218085    -1.57   0.117    -7.823235     .874941
+   _Q2b_chus |  -1.071578   2.693049    -0.40   0.691    -6.351947    4.208792
+   _Q2c_chus |   1.693923   1.481495     1.14   0.253    -1.210903    4.598749
+    _Q3a_usi |   11.37565   4.445509     2.56   0.011     2.659158    20.09213
+    _Q3b_usi |  -5.205536   4.838968    -1.08   0.282    -14.69349    4.282422
+    _Q3c_usi |   1.131969   2.319189     0.49   0.626    -3.415358    5.679297
+    _Q3d_usi |   1.708664   2.439505     0.70   0.484    -3.074571    6.491899
+   _Q4a_chrw |  -3.566721   11.79494    -0.30   0.762    -26.69353    19.56009
+   _Q4b_chrw |  -7.107886   6.406603    -1.11   0.267    -19.66957    5.453798
+   _Q4c_chrw |   4.580782   3.108503     1.47   0.141    -1.514185    10.67575
+   _Q4d_chrw |          0  (omitted)
+  dlv_ch_lag |   -.271781   .0073685   -36.88   0.000    -.2862287   -.2573334
+     mv_v_ch |    .364618   .0442824     8.23   0.000     .2777918    .4514441
+       _cons |    .129032   .0561459     2.30   0.022     .0189444    .2391196
+------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+        nofe |         1           0           1     |
+-----------------------------------------------------+
+********** CSQ ch v_nofe **********
+(222,100 real changes made)
+(257,100 real changes made)
+(209,409 real changes made)
+(239,878 real changes made)
+(111,986 real changes made)
+(120,182 real changes made)
+(215,788 real changes made)
+(246,450 real changes made)
+(207,668 real changes made)
+(239,668 real changes made)
+(101,678 real changes made)
+(108,353 real changes made)
+(9,666 real changes made)
+(257,100 real changes made)
+(9,106 real changes made)
+(239,784 real changes made)
+(4,452 real changes made)
+(108,157 real changes made)
+(4,299 real changes made)
+(123,572 real changes made)
+(100,964 real changes made)
+(246,450 real changes made)
+(99,542 real changes made)
+(240,033 real changes made)
+(50,557 real changes made)
+(108,431 real changes made)
+(0 real changes made)
+(0 real changes made)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+(5,203 real changes made, 5,203 to missing)
+
+Duplicates in terms of all variables
+
+(95,550 observations deleted)
+  (0 bytes saved)
+(file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_beta_v_nofe_ch_bs42.dta not found)
+file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_beta_v_nofe_ch_bs42.dta saved
+(246,162 real changes made)
+(246,162 real changes made)
+(246,162 real changes made)
+(204,511 real changes made)
+(244,707 real changes made)
+(94,517 real changes made)
+  (0 bytes saved)
+(file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_yhat_v_nofe_ch_bs42.dta not found)
+file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_yhat_v_nofe_ch_bs42.dta saved
+file /tmp/7227594.1.debian.q/St12074.00000h saved as .dta format
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                           260,150  
+    -----------------------------------------
+(26,142 missing values generated)
+       sw_rw: 26142 missing values recoded
+(5,203 missing values generated)
+(5,203 missing values generated)
+(7,702 missing values generated)
+(17,110 missing values generated)
+         Q1c: 5203 missing values recoded
+         Q2c: 5203 missing values recoded
+         Q3d: 7702 missing values recoded
+         Q4d: 17110 missing values recoded
+(file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /regs_v_nofe_rw_bs42.dta not found)
+file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /regs_v_nofe_rw_bs42.dta saved
+********** P rw v_nofe **********
+(MWFE estimator converged in 1 iterations)
+
+HDFE Linear regression                            Number of obs   =    223,646
+Absorbing 1 HDFE group                            F(   6,   3307) =     446.22
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.0933
+                                                  Adj R-squared   =     0.0932
+                                                  Within R-sq.    =     0.0933
+Number of clusters (hs6)     =      3,308         Root MSE        =     1.3821
+
+                                (Std. err. adjusted for 3,308 clusters in hs6)
+------------------------------------------------------------------------------
+             |               Robust
+      dlv_rw | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    dlz_usch |    .168019   .1191188     1.41   0.158     -.065535    .4015731
+    dlz_chus |   .2664407   .1038463     2.57   0.010     .0628311    .4700503
+     dlz_usi |   .2464723   .1705268     1.45   0.148    -.0878764    .5808211
+    dlz_chrw |   .0762623   .2712159     0.28   0.779    -.4555058    .6080303
+  dlv_rw_lag |  -.3165994   .0062011   -51.06   0.000    -.3287577   -.3044411
+     mv_v_rw |   .2477355   .0795155     3.12   0.002     .0918309    .4036401
+       _cons |  -.0217401   .0176596    -1.23   0.218    -.0563649    .0128847
+------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+        nofe |         1           0           1     |
+-----------------------------------------------------+
+********** P rw v_nofe **********
+********** CSQ rw v_nofe **********
+(MWFE estimator converged in 1 iterations)
+note: _c_dlz_usi_CHN omitted because of collinearity
+note: _c_dlz_chrw_CHN omitted because of collinearity
+note: _c_dlz_usi_USA omitted because of collinearity
+note: _c_dlz_chrw_USA omitted because of collinearity
+note: Q2b omitted because of collinearity
+note: Q3a omitted because of collinearity
+note: Q3b omitted because of collinearity
+note: Q4a omitted because of collinearity
+note: Q4b omitted because of collinearity
+note: Q4c omitted because of collinearity
+
+HDFE Linear regression                            Number of obs   =    234,008
+Absorbing 1 HDFE group                            F( 252,   3307) =      24.66
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.1022
+                                                  Adj R-squared   =     0.1012
+                                                  Within R-sq.    =     0.1022
+Number of clusters (hs6)     =      3,308         Root MSE        =     1.3515
+
+                                (Std. err. adjusted for 3,308 clusters in hs6)
+------------------------------------------------------------------------------
+             |               Robust
+      dlv_rw | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    dlz_usch |    .560918   .3499801     1.60   0.109    -.1252816    1.247118
+    dlz_chus |  -.0729034   .1933199    -0.38   0.706    -.4519423    .3061355
+     dlz_usi |   4.819287   3.990192     1.21   0.227    -3.004208    12.64278
+    dlz_chrw |  -1.822211   .5041105    -3.61   0.000    -2.810611   -.8338104
+_c_dlz~h_ARG |  -1.359105   .6553135    -2.07   0.038    -2.643966   -.0742439
+_c_dlz~s_ARG |   .3767049   .6030529     0.62   0.532    -.8056898      1.5591
+_c_dlz~i_ARG |   3.870922   1.349474     2.87   0.004     1.225034     6.51681
+_c_dlz~w_ARG |   4.149494    1.56225     2.66   0.008     1.086418     7.21257
+_c_dlz~h_AUS |  -.9783909   .4097773    -2.39   0.017    -1.781834   -.1749482
+_c_dlz~s_AUS |  -.1373352   .3609333    -0.38   0.704    -.8450105    .5703401
+_c_dlz~i_AUS |  -1.850709   .9551935    -1.94   0.053    -3.723539    .0221214
+_c_dlz~w_AUS |   .2348652    .786738     0.30   0.765    -1.307677    1.777408
+_c_dlz~h_AUT |  -.3245678   .3084696    -1.05   0.293    -.9293785     .280243
+_c_dlz~s_AUT |   .3330433   .2835091     1.17   0.240    -.2228277    .8889143
+_c_dlz~i_AUT |   .4645631   .3952693     1.18   0.240    -.3104343     1.23956
+_c_dlz~w_AUT |     .62307   .7479096     0.83   0.405    -.8433426    2.089483
+_c_dlz~h_BEL |   .3008646    .311668     0.97   0.334     -.310217    .9119463
+_c_dlz~s_BEL |   -.176282   .2779687    -0.63   0.526      -.72129    .3687261
+_c_dlz~i_BEL |   .1456504   .4639731     0.31   0.754    -.7640531    1.055354
+_c_dlz~w_BEL |   .8246828   .5180453     1.59   0.111    -.1910391    1.840405
+_c_dlz~h_BGD |   3.663529    1.07059     3.42   0.001     1.564444    5.762615
+_c_dlz~s_BGD |   1.256784   .8025453     1.57   0.117    -.3167523    2.830319
+_c_dlz~i_BGD |   -10.4447   3.961219    -2.64   0.008    -18.21139   -2.678013
+_c_dlz~w_BGD |  -3.021966   1.703732    -1.77   0.076    -6.362443    .3185101
+_c_dlz~h_BGR |   .3696962   .6022377     0.61   0.539    -.8111002    1.550493
+_c_dlz~s_BGR |   1.036911   .4979236     2.08   0.037     .0606418    2.013181
+_c_dlz~i_BGR |   .1098785   .9629287     0.11   0.909    -1.778118    1.997875
+_c_dlz~w_BGR |   .7036749   1.023309     0.69   0.492    -1.302708    2.710057
+_c_dlz~h_BRA |  -.3708466   .4546856    -0.82   0.415     -1.26234     .520647
+_c_dlz~s_BRA |  -.5410377   .4257917    -1.27   0.204     -1.37588    .2938043
+_c_dlz~i_BRA |    .450798   1.033544     0.44   0.663    -1.575653    2.477249
+_c_dlz~w_BRA |   .9861561   .9366949     1.05   0.293    -.8504043    2.822717
+_c_dlz~h_CAN |  -.9627202   .4383074    -2.20   0.028    -1.822101   -.1033389
+_c_dlz~s_CAN |  -.1381148   .4152621    -0.33   0.739    -.9523116     .676082
+_c_dlz~i_CAN |  -.1549277   1.214892    -0.13   0.899    -2.536945    2.227089
+_c_dlz~w_CAN |  -.8110679   1.085049    -0.75   0.455    -2.938503    1.316367
+_c_dlz~h_CHE |  -1.359411   .4441938    -3.06   0.002    -2.230333   -.4884883
+_c_dlz~s_CHE |  -.0599627   .4056749    -0.15   0.883    -.8553619    .7354365
+_c_dlz~i_CHE |   .4757168   .8364106     0.57   0.570    -1.164218    2.115652
+_c_dlz~w_CHE |   .2584801   1.007892     0.26   0.798    -1.717676    2.234636
+_c_dlz~h_CHL |  -.1974992   .7227981    -0.27   0.785    -1.614676    1.219678
+_c_dlz~s_CHL |   .6051541   .6146979     0.98   0.325    -.6000727    1.810381
+_c_dlz~i_CHL |  -.0789703   1.765653    -0.04   0.964    -3.540853    3.382912
+_c_dlz~w_CHL |  -1.865242    1.87126    -1.00   0.319    -5.534186    1.803702
+_c_dlz~h_CHN |    .192239   .2763218     0.70   0.487    -.3495401    .7340182
+_c_dlz~s_CHN |   1.002808   .2793778     3.59   0.000     .4550368    1.550579
+_c_dlz~i_CHN |          0  (omitted)
+_c_dlz~w_CHN |          0  (omitted)
+_c_dlz~h_COL |  -.9731177   .6741277    -1.44   0.149    -2.294867    .3486322
+_c_dlz~s_COL |  -.3453829   .6290217    -0.55   0.583    -1.578694    .8879284
+_c_dlz~i_COL |  -1.605402   1.845559    -0.87   0.384    -5.223956    2.013152
+_c_dlz~w_COL |   .2178353    1.25118     0.17   0.862    -2.235331    2.671001
+_c_dlz~h_CZE |   1.064362   .3551325     3.00   0.003     .3680602    1.760664
+_c_dlz~s_CZE |  -.3871175   .3224949    -1.20   0.230    -1.019427    .2451924
+_c_dlz~i_CZE |   .1334119   .4421596     0.30   0.763    -.7335224    1.000346
+_c_dlz~w_CZE |   .7188737    .755362     0.95   0.341    -.7621506    2.199898
+_c_dlz~h_DNK |  -.2721391    .452325    -0.60   0.547    -1.159004    .6147262
+_c_dlz~s_DNK |   .0499152   .3714667     0.13   0.893    -.6784128    .7782432
+_c_dlz~i_DNK |   1.075419   .7504482     1.43   0.152    -.3959715    2.546808
+_c_dlz~w_DNK |   .7575566   .6485468     1.17   0.243    -.5140373     2.02915
+_c_dlz_usc~Y |  -.3621756   .6944209    -0.52   0.602    -1.723714    .9993627
+_c_dlz_chu~Y |  -1.272879    .576883    -2.21   0.027    -2.403963   -.1417951
+_c_dlz_usi~Y |   2.673021   2.230029     1.20   0.231    -1.699356    7.045397
+_c_dlz_chr~Y |   1.157948   1.300315     0.89   0.373    -1.391556    3.707452
+_c_dlz~h_ESP |   -.389118   .2667013    -1.46   0.145    -.9120343    .1337983
+_c_dlz~s_ESP |   .6256379   .2351468     2.66   0.008     .1645898    1.086686
+_c_dlz~i_ESP |  -.2114795   .5105439    -0.41   0.679    -1.212493    .7895345
+_c_dlz~w_ESP |   .1398528   .5363076     0.26   0.794    -.9116756    1.191381
+_c_dlz~h_FIN |  -.6524172   .5245977    -1.24   0.214    -1.680986    .3761519
+_c_dlz~s_FIN |   .8074688   .5068103     1.59   0.111    -.1862247    1.801162
+_c_dlz~i_FIN |  -.1916957   .7321762    -0.26   0.793     -1.62726    1.243869
+_c_dlz~w_FIN |    1.56879   1.130592     1.39   0.165    -.6479403     3.78552
+_c_dlz~h_FRA |  -.3342889   .2561691    -1.30   0.192     -.836555    .1679773
+_c_dlz~s_FRA |  -.2377523   .2163312    -1.10   0.272    -.6619089    .1864042
+_c_dlz~i_FRA |  -.0284651   .3640485    -0.08   0.938    -.7422483    .6853181
+_c_dlz~w_FRA |   .0557841   .4294343     0.13   0.897    -.7861999    .8977681
+_c_dlz~h_GBR |  -.6615492   .2343943    -2.82   0.005    -1.121122   -.2019765
+_c_dlz~s_GBR |   .4256575   .2171722     1.96   0.050    -.0001481     .851463
+_c_dlz~i_GBR |   -.209706   .4074624    -0.51   0.607     -1.00861    .5891979
+_c_dlz~w_GBR |    .586299   .5669486     1.03   0.301    -.5253068    1.697905
+_c_dlz_usc~C |   .7396718   .5195768     1.42   0.155    -.2790529    1.758397
+_c_dlz_chu~C |   .3338649   .4616556     0.72   0.470    -.5712947    1.239025
+_c_dlz_usi~C |  -.0141151   1.136676    -0.01   0.990    -2.242774    2.214544
+_c_dlz_chr~C |   1.123038   .8475638     1.33   0.185    -.5387643    2.784841
+_c_dlz~h_HKG |   .1343717   .5057098     0.27   0.790    -.8571643    1.125908
+_c_dlz~s_HKG |   -.299548   .5084043    -0.59   0.556    -1.296367    .6972709
+_c_dlz~i_HKG |    .829272   1.152755     0.72   0.472    -1.430914    3.089458
+_c_dlz~w_HKG |   4.127522   .9147147     4.51   0.000     2.334057    5.920986
+_c_dlz~h_HUN |   .2491132   .5196515     0.48   0.632    -.7697579    1.267984
+_c_dlz~s_HUN |    .505129   .4678368     1.08   0.280      -.41215    1.422408
+_c_dlz~i_HUN |  -1.703554   1.183303    -1.44   0.150    -4.023633    .6165263
+_c_dlz~w_HUN |   1.163243   1.186609     0.98   0.327    -1.163319    3.489806
+_c_dlz~h_IDN |    -.65683   .5745849    -1.14   0.253    -1.783408     .469748
+_c_dlz~s_IDN |    .040813   .5142072     0.08   0.937    -.9673837     1.04901
+_c_dlz~i_IDN |    2.86671   1.179434     2.43   0.015     .5542155    5.179205
+_c_dlz~w_IDN |   2.083371   1.138525     1.83   0.067    -.1489138    4.315656
+_c_dlz~h_IND |   .4475969   .3291905     1.36   0.174    -.1978408    1.093035
+_c_dlz~s_IND |   .0454028   .3255097     0.14   0.889    -.5928181    .6836237
+_c_dlz~i_IND |   .5636356   .6064973     0.93   0.353    -.6255124    1.752784
+_c_dlz~w_IND |    1.62286   .7132079     2.28   0.023     .2244867    3.021234
+_c_dlz~h_IRL |  -.8932438   .6217661    -1.44   0.151    -2.112329    .3258414
+_c_dlz~s_IRL |   .4667039    .491137     0.95   0.342    -.4962594    1.429667
+_c_dlz~i_IRL |    2.05063   1.304352     1.57   0.116    -.5067894     4.60805
+_c_dlz~w_IRL |   2.149682   .9937286     2.16   0.031     .2012971    4.098068
+_c_dlz~h_ISR |   1.425369   .6710216     2.12   0.034     .1097094    2.741029
+_c_dlz~s_ISR |  -1.851173   .6007725    -3.08   0.002    -3.029097   -.6732496
+_c_dlz~i_ISR |  -2.208606   2.100296    -1.05   0.293    -6.326619    1.909406
+_c_dlz~w_ISR |  -.2436786   1.294848    -0.19   0.851    -2.782463    2.295106
+_c_dlz~h_ITA |    .144061   .2488178     0.58   0.563    -.3437915    .6319135
+_c_dlz~s_ITA |  -.1652502   .2397189    -0.69   0.491    -.6352626    .3047621
+_c_dlz~i_ITA |    .284856   .3085942     0.92   0.356     -.320199    .8899109
+_c_dlz~w_ITA |   .0172612   .4974058     0.03   0.972    -.9579932    .9925157
+_c_dlz~h_JPN |  -.8836348   .3652126    -2.42   0.016      -1.5997   -.1675692
+_c_dlz~s_JPN |   .7865731   .3676142     2.14   0.032     .0657986    1.507348
+_c_dlz~i_JPN |  -1.030032   .4321913    -2.38   0.017    -1.877421    -.182642
+_c_dlz~w_JPN |    1.50583   .7187937     2.09   0.036     .0965045    2.915156
+_c_dlz~h_KOR |  -.8184703   .4142627    -1.98   0.048    -1.630708   -.0062331
+_c_dlz~s_KOR |  -.2695793   .4007023    -0.67   0.501    -1.055229    .5160702
+_c_dlz~i_KOR |   .8594183   .6250636     1.37   0.169    -.3661324    2.084969
+_c_dlz~w_KOR |   1.921931   .8279205     2.32   0.020     .2986425    3.545219
+_c_dlz_usc~X |   .2753544   .4672278     0.59   0.556    -.6407304    1.191439
+_c_dlz_chu~X |  -.1936885   .4596683    -0.42   0.674    -1.094952    .7075748
+_c_dlz_usi~X |   .4885472   1.183805     0.41   0.680    -1.832517    2.809611
+_c_dlz_chr~X |    2.01642   .9645038     2.09   0.037     .1253348    3.907504
+_c_dlz~h_MYS |   .0566677   .4634673     0.12   0.903    -.8520441    .9653794
+_c_dlz~s_MYS |  -.2365932   .4300001    -0.55   0.582    -1.079686    .6065001
+_c_dlz~i_MYS |   1.613224   .8276052     1.95   0.051    -.0094466    3.235894
+_c_dlz~w_MYS |   2.808663   .9994931     2.81   0.005     .8489755    4.768351
+_c_dlz~h_NLD |  -.1107777   .2444566    -0.45   0.650    -.5900793    .3685239
+_c_dlz~s_NLD |   .2946123   .1967022     1.50   0.134    -.0910581    .6802827
+_c_dlz~i_NLD |   .1100483   .4988816     0.22   0.825    -.8680997    1.088196
+_c_dlz~w_NLD |    .185721   .4472479     0.42   0.678    -.6911898    1.062632
+_c_dlz~h_NZL |   -1.43821    .485084    -2.96   0.003    -2.389306   -.4871149
+_c_dlz~s_NZL |  -.3673192    .426983    -0.86   0.390    -1.204497    .4698586
+_c_dlz~i_NZL |     .18294    .997553     0.18   0.855    -1.772944    2.138824
+_c_dlz~w_NZL |   1.627675   1.005427     1.62   0.106    -.3436462    3.598997
+_c_dlz~h_PER |   .0080671   .6499808     0.01   0.990    -1.266338    1.282472
+_c_dlz~s_PER |   .0154501    .605275     0.03   0.980    -1.171301    1.202202
+_c_dlz~i_PER |  -2.337319   2.545309    -0.92   0.359    -7.327858    2.653221
+_c_dlz~w_PER |   2.642412   1.320876     2.00   0.046     .0525945    5.232229
+_c_dlz~h_PHL |   .1915386    .736567     0.26   0.795    -1.252635    1.635712
+_c_dlz~s_PHL |   .0150395   .6235436     0.02   0.981    -1.207531     1.23761
+_c_dlz~i_PHL |   .0662141    2.02096     0.03   0.974    -3.896245    4.028673
+_c_dlz~w_PHL |   .9603133   1.370875     0.70   0.484    -1.727535    3.648162
+_c_dlz~h_POL |   .8957492   .3557685     2.52   0.012     .1982004    1.593298
+_c_dlz~s_POL |   .4451871   .3509886     1.27   0.205    -.2429897    1.133364
+_c_dlz~i_POL |  -.4020117   .4583402    -0.88   0.380    -1.300671    .4966476
+_c_dlz~w_POL |  -1.522621   .7181083    -2.12   0.034    -2.930603   -.1146396
+_c_dlz~h_PRT |   .0825972    .400872     0.21   0.837    -.7033851    .8685794
+_c_dlz~s_PRT |   .2394694   .3817533     0.63   0.531    -.5090272     .987966
+_c_dlz~i_PRT |  -.1108579   .6399213    -0.17   0.862     -1.36554    1.143824
+_c_dlz~w_PRT |    1.15541   .7560321     1.53   0.127    -.3269284    2.637748
+_c_dlz_usc~U |   .0638828   .5553739     0.12   0.908    -1.025029    1.152794
+_c_dlz_chu~U |   .6544024   .4642757     1.41   0.159    -.2558943    1.564699
+_c_dlz_usi~U |   .1915761   1.347994     0.14   0.887    -2.451411    2.834564
+_c_dlz_chr~U |   1.573642   .9747237     1.61   0.107    -.3374809    3.484765
+_c_dlz~h_SGP |  -1.134825   .5083199    -2.23   0.026    -2.131478   -.1381713
+_c_dlz~s_SGP |  -.2161652   .4747325    -0.46   0.649    -1.146965    .7146341
+_c_dlz~i_SGP |   .8987569   .7193412     1.25   0.212    -.5116422    2.309156
+_c_dlz~w_SGP |    1.89386   .9943606     1.90   0.057     -.055765    3.843484
+_c_dlz~h_SVK |  -.1616019   .5152168    -0.31   0.754    -1.171778    .8485742
+_c_dlz~s_SVK |   .6589861   .4697656     1.40   0.161    -.2620747    1.580047
+_c_dlz~i_SVK |   1.135682   .8121245     1.40   0.162    -.4566353       2.728
+_c_dlz~w_SVK |  -1.030754   1.047484    -0.98   0.325    -3.084538    1.023029
+_c_dlz~h_SVN |   -.602902   .5798871    -1.04   0.299    -1.739876     .534072
+_c_dlz~s_SVN |    1.29134   .4844125     2.67   0.008     .3415609    2.241118
+_c_dlz~i_SVN |   1.308365   .7126165     1.84   0.066    -.0888493    2.705579
+_c_dlz~w_SVN |   1.293372   1.238511     1.04   0.296    -1.134954    3.721698
+_c_dlz~h_SWE |   -.800915   .4111463    -1.95   0.051    -1.607042     .005212
+_c_dlz~s_SWE |   .2434659   .3717325     0.65   0.513    -.4853832     .972315
+_c_dlz~i_SWE |   1.169009   .6255608     1.87   0.062    -.0575164    2.395535
+_c_dlz~w_SWE |   .1166325   .7379343     0.16   0.874    -1.330222    1.563487
+_c_dlz~h_THA |  -.5872039    .467448    -1.26   0.209    -1.503721    .3293129
+_c_dlz~s_THA |   1.018458   .4689689     2.17   0.030     .0989593    1.937957
+_c_dlz~i_THA |   .2826194   .7941095     0.36   0.722    -1.274376    1.839615
+_c_dlz~w_THA |   4.457776   .8593095     5.19   0.000     2.772943    6.142608
+_c_dlz~h_TUR |  -.5600982   .4275021    -1.31   0.190    -1.398294    .2780973
+_c_dlz~s_TUR |   1.296784   .3982176     3.26   0.001     .5160064    2.077562
+_c_dlz~i_TUR |   1.639852   .5853153     2.80   0.005     .4922356    2.787469
+_c_dlz~w_TUR |   1.787187   .7242173     2.47   0.014      .367227    3.207146
+_c_dlz~h_TWN |  -.8460751    .411756    -2.05   0.040    -1.653397   -.0387527
+_c_dlz~s_TWN |  -.1748687   .3702482    -0.47   0.637    -.9008076    .5510701
+_c_dlz~i_TWN |  -.2569332    .508034    -0.51   0.613    -1.253026    .7391596
+_c_dlz~w_TWN |   2.781124   .7755909     3.59   0.000     1.260438    4.301811
+_c_dlz~h_UKR |   .1207555   .5689254     0.21   0.832    -.9947262    1.236237
+_c_dlz~s_UKR |   1.050314   .5611265     1.87   0.061    -.0498768    2.150504
+_c_dlz~i_UKR |  -.6304645   1.047227    -0.60   0.547    -2.683743    1.422814
+_c_dlz~w_UKR |  -.5810529   1.319671    -0.44   0.660    -3.168507    2.006402
+_c_dlz~h_USA |   .0142427   .2042383     0.07   0.944    -.3862036     .414689
+_c_dlz~s_USA |  -.1483934    .188014    -0.79   0.430    -.5170289    .2202421
+_c_dlz~i_USA |          0  (omitted)
+_c_dlz~w_USA |          0  (omitted)
+_c_dlz_usc~M |   2.665267   .5433341     4.91   0.000     1.599962    3.730572
+_c_dlz_chu~M |   .4786527   .4906273     0.98   0.329    -.4833111    1.440617
+_c_dlz_usi~M |  -.9847944   .8222732    -1.20   0.231     -2.59701    .6274216
+_c_dlz_chr~M |   1.384866   1.060205     1.31   0.192    -.6938577     3.46359
+_c_dlz_usc~F |  -.4459372   .3301694    -1.35   0.177    -1.093294    .2014198
+_c_dlz_chu~F |  -.2159947   .2869813    -0.75   0.452    -.7786737    .3466843
+_c_dlz_usi~F |   .4187163   .5879382     0.71   0.476    -.7340434    1.571476
+_c_dlz_chr~F |   2.413586   .6665878     3.62   0.000     1.106619    3.720552
+_s_dlz_usc~l |  -.9490755   .3770725    -2.52   0.012    -1.688395   -.2097564
+_s_dlz_chu~l |  -.2728414   .2421753    -1.13   0.260    -.7476701    .2019873
+_s_dlz_usi~l |  -6.006851    8.06776    -0.74   0.457    -21.82516    9.811457
+_s_dlz_chr~l |  -.2424489    .510282    -0.48   0.635    -1.242949    .7580516
+~h_Chemicals |  -.1154569   .4611554    -0.25   0.802    -1.019636     .788722
+~s_Chemicals |   .7469568   .3565879     2.09   0.036     .0478015    1.446112
+~i_Chemicals |    22.6407   9.595638     2.36   0.018     3.826714    41.45469
+~w_Chemicals |    5.51688   1.874585     2.94   0.003     1.841416    9.192345
+_s_dlz_usc~y |  -.1786499   .3432908    -0.52   0.603    -.8517338     .494434
+_s_dlz_chu~y |   .1673032   .2679579     0.62   0.532    -.3580769    .6926834
+_s_dlz_usi~y |   -4.91646   3.993563    -1.23   0.218    -12.74657    2.913645
+_s_dlz_chr~y |   1.799001   .7259502     2.48   0.013     .3756439    3.222358
+~h_Materials |   .8939443   .4125068     2.17   0.030     .0851499    1.702739
+~s_Materials |  -1.011343   .4330347    -2.34   0.020    -1.860386   -.1622999
+~i_Materials |   4.521512   10.43952     0.43   0.665    -15.94707    24.99009
+~w_Materials |      4.143   2.100284     1.97   0.049     .0250128    8.260988
+_s_~h_Metals |  -.5322024   .3619633    -1.47   0.142    -1.241897    .1774923
+_s_~s_Metals |   .8843681   .2653081     3.33   0.001     .3641834    1.404553
+_s_~i_Metals |  -4.437935   3.986496    -1.11   0.266    -12.25418    3.378316
+_s_~w_Metals |   1.895895   .7391365     2.57   0.010     .4466837    3.345106
+_~h_Minerals |   .1981242   .9786361     0.20   0.840     -1.72067    2.116918
+_~s_Minerals |  -.0810475   .6611097    -0.12   0.902    -1.377273    1.215178
+_~i_Minerals |  -23.36569   8.285507    -2.82   0.005    -39.61093   -7.120451
+_~w_Minerals |   5.825559   10.65626     0.55   0.585    -15.06798     26.7191
+_s_dlz_usc.. |   .3346005   .3618381     0.92   0.355    -.3748488     1.04405
+_s_dlz_chu.. |   .1469255   .2900434     0.51   0.612    -.4217572    .7156082
+_s_dlz_usi.. |   4.024376   8.931131     0.45   0.652    -13.48673    21.53548
+_s_dlz_chr.. |   1.598086   .6392037     2.50   0.012     .3448109    2.851361
+_s_dlz_usc~t |   .2136294    .583749     0.37   0.714    -.9309166    1.358175
+_s_dlz_chu~t |    .493556   .4801877     1.03   0.304    -.4479391    1.435051
+_s_dlz_usi~t |   2.213352    16.3312     0.14   0.892    -29.80692    34.23363
+_s_dlz_chr~t |  -2.118541   1.510998    -1.40   0.161    -5.081126    .8440446
+         Q1a |   .3263136   .0907683     3.60   0.000     .1483458    .5042814
+         Q1b |  -.4045409   .5525516    -0.73   0.464    -1.487919    .6788368
+         Q1c |  -.0466011   .1277567    -0.36   0.715    -.2970912    .2038891
+         Q2a |   .0788851   .1158783     0.68   0.496    -.1483153    .3060855
+         Q2b |          0  (omitted)
+         Q2c |  -.3816603   .2735392    -1.40   0.163    -.9179835     .154663
+         Q3a |          0  (omitted)
+         Q3b |          0  (omitted)
+         Q3c |  -.4018694   .4774734    -0.84   0.400    -1.338043    .5343039
+         Q3d |   .2065344    .063468     3.25   0.001     .0820938     .330975
+         Q4a |          0  (omitted)
+         Q4b |          0  (omitted)
+         Q4c |          0  (omitted)
+         Q4d |   .1219935   .0434006     2.81   0.005     .0368987    .2070882
+   _Q1a_usch |  -1.144188   1.081452    -1.06   0.290    -3.264571    .9761945
+   _Q1b_usch |   1.256118   1.113963     1.13   0.260    -.9280095    3.440245
+   _Q1c_usch |   -.272637   1.426855    -0.19   0.848    -3.070246    2.524972
+   _Q2a_chus |   .2370526   .7485978     0.32   0.752    -1.230709    1.704814
+   _Q2b_chus |   1.494275   .6362539     2.35   0.019     .2467838    2.741766
+   _Q2c_chus |    2.49425   1.902369     1.31   0.190    -1.235689     6.22419
+    _Q3a_usi |  -5.554896   2.823432    -1.97   0.049    -11.09075   -.0190445
+    _Q3b_usi |    24.1466   9.436344     2.56   0.011     5.644929    42.64826
+    _Q3c_usi |  -22.57747   9.000501    -2.51   0.012    -40.22459   -4.930356
+    _Q3d_usi |  -1.690601   1.158105    -1.46   0.144    -3.961277    .5800747
+   _Q4a_chrw |  -1.648324   5.126168    -0.32   0.748    -11.69911    8.402458
+   _Q4b_chrw |  -16.37871   10.71772    -1.53   0.127    -37.39275    4.635322
+   _Q4c_chrw |   27.33307   10.92032     2.50   0.012     5.921797    48.74434
+   _Q4d_chrw |  -1.529549   1.210551    -1.26   0.206    -3.903054     .843956
+  dlv_rw_lag |  -.3174084   .0061145   -51.91   0.000     -.329397   -.3054198
+     mv_v_rw |   .2369219   .0796972     2.97   0.003     .0806611    .3931826
+       _cons |  -.0513617   .0239744    -2.14   0.032    -.0983679   -.0043555
+------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+        nofe |         1           0           1     |
+-----------------------------------------------------+
+********** CSQ rw v_nofe **********
+(220,750 real changes made)
+(257,600 real changes made)
+(208,592 real changes made)
+(240,257 real changes made)
+(112,642 real changes made)
+(122,206 real changes made)
+(215,847 real changes made)
+(248,000 real changes made)
+(207,895 real changes made)
+(240,414 real changes made)
+(100,417 real changes made)
+(107,453 real changes made)
+(9,410 real changes made)
+(257,600 real changes made)
+(8,985 real changes made)
+(240,418 real changes made)
+(8,956 real changes made)
+(239,570 real changes made)
+(4,109 real changes made)
+(122,224 real changes made)
+(102,788 real changes made)
+(248,000 real changes made)
+(101,514 real changes made)
+(240,440 real changes made)
+(101,278 real changes made)
+(239,604 real changes made)
+(50,573 real changes made)
+(107,399 real changes made)
+
+Duplicates in terms of all variables
+
+(94,750 observations deleted)
+  (0 bytes saved)
+(file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_beta_v_nofe_rw_bs42.dta not found)
+file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_beta_v_nofe_rw_bs42.dta saved
+(250,658 real changes made)
+(250,658 real changes made)
+(250,658 real changes made)
+(207,347 real changes made)
+(249,349 real changes made)
+(233,989 real changes made)
+  (0 bytes saved)
+(file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_yhat_v_nofe_rw_bs42.dta not found)
+file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_yhat_v_nofe_rw_bs42.dta saved
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                                50  
+    -----------------------------------------
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                                50  
+    -----------------------------------------
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                                50  
+    -----------------------------------------
+  (0 bytes saved)
+(file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_yhat_v_nofe_bs42.dta not found)
+file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_yhat_v_nofe_bs42.dta saved
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                       120,700
+        from master                    60,100  
+        from using                     60,600  
+
+    Matched                           104,000  
+    -----------------------------------------
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                       103,700
+        from master                    81,500  
+        from using                     22,200  
+
+    Matched                           143,200  
+    -----------------------------------------
+  (0 bytes saved)
+(file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_beta_v_nofe_bs42.dta not found)
+file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/tmp/
+    > /bs_beta_v_nofe_bs42.dta saved
+
+. 
+. *}
+. 
+. dis "-- FINISHED --"
+-- FINISHED --
+
+. exit
+
+end of do-file
+
+
+

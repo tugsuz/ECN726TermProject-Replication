@@ -1,0 +1,340 @@
+--------------------------------------------------------------------------------
+      name:  <unnamed>
+       log:  /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/cod
+> e/logs//z_usi.log
+  log type:  text
+ opened on:  17 Oct 2023, 22:15:18
+
+. 
+. *******************
+. *** Imports
+. *******************
+. 
+. *Read Census trade flows
+. use * if cty_code>0 & year>=2015 & cty_name!="CHINA" using "$raw/census_trade/
+> m_flow_hs10_fm_new",clear
+
+. 
+. *Fill the panel
+. tsset id mdate
+
+Panel variable: id (unbalanced)
+ Time variable: mdate, 2015m1 to 2019m12, but with gaps
+         Delta: 1 month
+
+. fillin id mdate
+
+. 
+. *Carryforward vars
+. rename tmp* *
+
+. gsort id -cty_code
+
+. by id: carryforward cty* hs* m_effective_mdate4 m_T, replace
+cty_code:  (22,849,944 real changes made)
+cty_name:  (22,849,944 real changes made)
+cty_iso3:  (22,500,317 real changes made)
+hs10:  (22,849,944 real changes made)
+hs8:  (22,849,944 real changes made)
+hs6:  (22,849,944 real changes made)
+hs4:  (22,849,944 real changes made)
+hs2:  (22,849,944 real changes made)
+m_effective_mdate4:  (19,618,633 real changes made)
+m_T:  (22,849,944 real changes made)
+
+. gsort id mdate
+
+. by id: carryforward m_stattariff4 m_increase,  replace
+m_stattariff4:  (14,687,374 real changes made)
+m_increase:  (14,617,640 real changes made)
+
+. gsort id -mdate
+
+. by id: carryforward m_stattariff4,  replace
+m_stattariff4:  (8,172,559 real changes made)
+
+. gsort id mdate
+
+. mvencode m_increase, mv(0) override
+  m_increase: 8310617 missing values recoded
+
+. 
+. *Identify from tariff changes in the post-period
+. replace m_increase = 0 if mdate<m_effective_mdate4 - 1  
+(0 real changes made)
+
+. 
+. /*Steel tariffs are lifted on Canada and Mexico on May 19 2019 
+> replace m_increase = m_increase*(19/31) if inlist(cty_name,"CANADA","MEXICO") 
+> & (m_steel_hit==1 | m_alum_hit==1) & mdate==tm(2019m5)
+> replace m_increase = 0 if inlist(cty_name,"CANADA","MEXICO") & (m_steel_hit==1
+>  | m_alum_hit==1) & mdate>=tm(2019m6)
+> replace m_stattariff4 = 0 if inlist(cty_name,"CANADA","MEXICO") & (m_steel_hit
+> ==1 | m_alum_hit==1) & mdate>=tm(2019m6)
+> 
+> * add India GSP removal tariff increases
+> preserve
+>         * LOAD GSP ELIGIBLE PRODUCTS list https://ustr.gov/sites/default/files
+> /gsp/GSP_eligible_products_BDCs.pdf
+>         import excel using "$raw/India GSP tariffs/GSP_eligible_products_BDCs"
+> , firstrow clear
+>         drop if _n == 1
+>         rename GSP hs8
+>         drop if hs8 == "HTS Number"
+>         drop E B
+>         rename (C D) (MFN GSPstatus)
+>         compress
+>         keep if length(hs8) == 10
+>         replace hs8 = subinstr(hs8,".","",.)
+>         destring hs8,  replace
+>         replace MFN = subinstr(MFN,char(10)," ",.)
+>         
+>         *clean stuff
+>         g x = MFN if strpos(MFN,"%")>0
+>         replace x = substr(x,strpos(x,"+"),6)
+>         replace x = subinstr(x,"+ ","",.)
+>         replace x = subinstr(x,"%","",.)
+>         replace x = subinstr(x," o","",.)
+>         replace x = subinstr(x," +","",.)
+>         replace x = trim(x)
+>         destring x, replace
+>         replace x = x/100
+>         destring MFN, force replace
+>         replace MFN =x if mi(MFN)
+>         drop x
+>         drop if mi(MFN)
+>         
+>         * drop A* (only least developed countries)
+>         drop if GSPstatus == "A*"
+>         duplicates drop hs8, force
+>         g cty_name = "INDIA"
+>         g mdate = tm(2019m6)
+>         format mdate %tm
+>         tempfile india
+>         save "${tmp}india", replace
+> restore
+> merge m:1 hs8 cty_name mdate using "${tmp}india", keep(master match) keepusing
+> (MFN GSPstatus)
+> 
+> * replace tariffs with GSP removal tariffs (difference between GSP tariff of 0
+>  and MFN)
+> * only replace tariffs, if there are no other tariffs already being imposed
+> 
+> // flag products with GSP exception
+> g y = 1 if GSPstatus == "A"
+> gegen yy = max(y), by(hs10 cty_iso3)
+> replace GSPstatus = "A" if yy == 1
+> drop y yy
+> replace MFN = 0 if mi(MFN)
+> 
+> // replace tariffs, but only if MFN tariffs is larger than any other imposed t
+> ariffs (MFN>x)
+> gegen x = max(m_increase), by(cty_iso3 hs8)
+> g xx = (x==0) & GSPstatus == "A"
+> gegen mfn_active = max(xx), by(cty_iso3 hs8)
+> replace mfn_active = 0 if cty_iso3 != "IND"
+> drop xx x
+> g eff_date_gsp = tm(2019m6) if GSPstatus == "A" & cty_iso3 == "IND" 
+> format eff_date_gsp %tm
+> replace m_effective_mdate4 = eff_date_gsp if mfn_active == 1 & cty_iso3 == "IN
+> D" // replace effective date
+> 
+> // set tariffs to missing if mfn is active (to carryforward)
+> replace m_increase = . if cty_iso3 == "IND" & mfn_active == 1 // set increases
+>  to missing to carryforward india stuff
+> replace m_stattariff4 = . if cty_iso3 == "IND" &  mfn_active == 1 // set tarif
+> fs to missing to carryforward india stuff
+> 
+> // replace tariffs with MFN tariffs
+> replace m_stattariff4 = MFN if _m == 3 &  mfn_active == 1 & cty_iso3 == "IND"
+> replace m_increase = MFN if _m == 3 &  mfn_active == 1  & cty_iso3 == "IND"
+> drop _m
+> */
+. 
+. // carryforward
+. gsort id -cty_code
+
+. by id: carryforward cty* hs* m_effective_mdate4 m_T, replace
+cty_code:  (0 real changes made)
+cty_name:  (0 real changes made)
+cty_iso3:  (0 real changes made)
+hs10:  (0 real changes made)
+hs8:  (0 real changes made)
+hs6:  (0 real changes made)
+hs4:  (0 real changes made)
+hs2:  (0 real changes made)
+m_effective_mdate4:  (0 real changes made)
+m_T:  (0 real changes made)
+
+. gsort id mdate
+
+. by id: carryforward m_stattariff4 m_increase,  replace
+m_stattariff4:  (0 real changes made)
+m_increase:  (0 real changes made)
+
+. gsort id -mdate
+
+. by id: carryforward m_stattariff4,  replace
+m_stattariff4:  (0 real changes made)
+
+. gsort id mdate
+
+. mvencode m_increase, mv(0) override
+
+. replace m_stattariff4 = 0 if mfn_active == 1 & mdate<tm(2019m6)
+(48,869 real changes made)
+
+. 
+. *Tariff variable
+. g m_tariff = m_stattariff4
+(35,747 missing values generated)
+
+. 
+. *Fix data errors
+. replace m_increase = 0 if m_increase>m_tariff
+(21,361 real changes made)
+
+. 
+. *Collapse to variety-level
+. gcollapse (mean) m_tariff m_increase (min) m_effective_mdate4 [aw=m_val], by(c
+> ty_iso3 hs6 mdate)
+
+. 
+. *Fillin again
+. fillin cty_iso3 hs6 mdate
+
+. gegen x = mean(m_tariff) if !inlist(cty_iso3,"CAN","MEX","IND"), by(hs6 mdate)
+
+. replace m_tariff = x if mi(m_tariff) & !inlist(cty_iso3,"CAN","MEX","IND")
+(52,719,164 real changes made)
+
+. gegen z = mean(m_increase) if !inlist(cty_iso3,"CAN","MEX","IND"), by(hs6 mdat
+> e)
+
+. replace m_increase = z if mi(m_increase) & !inlist(cty_iso3,"CAN","MEX","IND")
+(52,719,164 real changes made)
+
+. drop x z _fillin
+
+. mvencode m_increase, mv(0) override
+  m_increase: 8004277 missing values recoded
+
+. 
+. *Check
+. drop if mi(cty_iso3,hs6,mdate)
+(325,740 observations deleted)
+
+. gsort cty_iso3 hs6 mdate 
+
+. gisid cty_iso3 hs6 mdate
+
+. 
+. *Rename vars
+. rename m_tariff z_usi
+
+. rename m_increase dz_usi
+
+. 
+. *Collapse by time period
+. g date = dofm(mdate)
+
+. g year = yofd(date)
+
+. g t = 0 if year == 2016 | year == 2017
+(38,893,356 missing values generated)
+
+. replace t = -1 if inrange(year,2014,2015)
+(12,964,452 real changes made)
+
+. replace t= 1 if inrange(year,2018,2019)
+(25,928,904 real changes made)
+
+. gcollapse z_usi dz_usi, by(cty_iso3 hs6 t)
+
+. g dlz_usi = ln(1+dz_usi)
+
+. 
+. *Save
+. compress
+  variable t was float now byte
+  (9,723,339 bytes saved)
+
+. save "$processed/z_usi", replace
+file
+    /shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/proce
+    > ssed//z_usi.dta saved
+
+. 
+. exit'
+' invalid name
+r(198);
+
+end of do-file
+
+r(198);
+
+. cd $processed
+/shared/share_amit-patrick/globaltradewar/GTW_replication_CHECK/data/processed
+
+. do "/tmp/7227549.1.debian.q/SD61302.000000"
+
+.         
+. *** Main build
+.         do "$code/build.do"                                     // Creates dat
+> asets used in analysis    
+
+. /**************************************************
+> The US-China Trade War and Global Reallocations
+> Fajgelbaum, Goldberg, Kennedy, Khandelwal, and Taglioni
+> July 2023
+> *** Main data build
+> **************************************************/
+. 
+. clear all
+
+. set more off 
+
+. 
+. *Set directories
+. do "$code/00_directories.do"
+
+. /**************************************************
+> The US-China Trade War and Global Reallocations
+> Fajgelbaum, Goldberg, Kennedy, Khandelwal, and Taglioni
+> July 2023
+> *** Set directories
+> **************************************************/
+. 
+. // Set root directory
+. global db               "/shared/share_amit-patrick/globaltradewar/GTW_replica
+> tion_CHECK/" // replace this line with your root directory
+
+. 
+. // All other paths set automatically
+. global code             "${db}code/"
+
+. global logs             "${db}code/logs/"
+
+. global raw              "${db}data/raw/"
+
+. global tmp              "${db}data/tmp/"
+
+. global processed        "${db}data/processed/" 
+
+. global results          "${db}results/" 
+
+. 
+. // Set scheme
+. cap net install scheme-modern, from("https://raw.githubusercontent.com/mdroste
+> /stata-scheme-modern/master/")
+
+. set scheme modern, perm
+(set scheme preference recorded)
+
+. 
+. 
+end of do-file
+
+. 
+. *Log file
+. cap log close
