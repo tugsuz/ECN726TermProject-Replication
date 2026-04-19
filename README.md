@@ -37,7 +37,7 @@ do 03_regional_meta_analysis.do
 
 Result: These scripts will generate `meta_results.dta` and `meta_results_region.dta` in the `/data/processed/` folder. They will also automatically output `meta_analysis_forest_plot.png` and `regional_forest_plot.png` into the `/results/` folder.
 
-### Viewing the Tables: 
+### Viewing the Tables
 The coefficients and standard errors for the meta-analysis tables are printed directly to the Stata console at the end of the script execution. You can also view them manually at any time by running: 
 ```stata
 use "../data/processed/meta_results.dta", clear
